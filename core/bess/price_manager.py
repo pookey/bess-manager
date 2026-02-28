@@ -117,16 +117,26 @@ class HomeAssistantSource(PriceSource):
     consistently return VAT-exclusive prices.
     """
 
-    def __init__(self, ha_controller, vat_multiplier: float) -> None:
-        """Initialize with Home Assistant controller.
+    def __init__(
+        self,
+        ha_controller,
+        vat_multiplier: float,
+        today_entity: str,
+        tomorrow_entity: str,
+    ) -> None:
+        """Initialize with Home Assistant controller and entity IDs.
 
         Args:
             ha_controller: Controller with access to Home Assistant
             vat_multiplier: VAT multiplier used to convert VAT-inclusive prices to VAT-exclusive
                             (must be provided from config.yaml)
+            today_entity: HA entity ID for today's Nordpool prices
+            tomorrow_entity: HA entity ID for tomorrow's Nordpool prices
         """
         self.ha_controller = ha_controller
         self.vat_multiplier = vat_multiplier
+        self.today_entity = today_entity
+        self.tomorrow_entity = tomorrow_entity
 
     def get_prices_for_date(self, target_date: date) -> list:
         """Get prices from Home Assistant for the specified date.
@@ -145,9 +155,9 @@ class HomeAssistantSource(PriceSource):
             )
 
         try:
-            # Fetch sensor data from both sensors
-            today_data = self._fetch_sensor_attributes("nordpool_kwh_today")
-            tomorrow_data = self._fetch_sensor_attributes("nordpool_kwh_tomorrow")
+            # Fetch sensor data from both sensors using configured entity IDs
+            today_data = self._fetch_sensor_attributes(self.today_entity)
+            tomorrow_data = self._fetch_sensor_attributes(self.tomorrow_entity)
 
             # Try both sensors - use whichever has valid data for our target date
             for sensor_data, sensor_name in [
@@ -175,15 +185,17 @@ class HomeAssistantSource(PriceSource):
                 message=f"Failed to get price data for {target_date}: {e}",
             ) from e
 
-    def _fetch_sensor_attributes(self, sensor_key):
-        """Fetch attributes from the configured Nordpool sensor via HA controller's sensor mapping."""
+    def _fetch_sensor_attributes(self, entity_id: str):
+        """Fetch attributes from the specified Nordpool sensor entity.
+
+        Args:
+            entity_id: HA entity ID to fetch attributes from
+        """
         try:
-            # Use HA controller's sensor mapping to get the actual entity ID
-            entity_id = self.ha_controller.sensors.get(sensor_key)
             if not entity_id:
                 return None
 
-            # Fetch sensor state with attributes using the mapped entity ID
+            # Fetch sensor state with attributes using the entity ID directly
             response = self.ha_controller._api_request(
                 "get", f"/api/states/{entity_id}"
             )

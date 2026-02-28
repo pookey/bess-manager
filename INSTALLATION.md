@@ -112,19 +112,19 @@ electricity_price:
   additional_costs: 1.03            # Additional costs (per kWh)
   tax_reduction: 0.6518             # Tax reduction for sold energy (per kWh)
 
-# Price provider selection (choose one)
-nordpool:
-  price_provider: "nordpool"        # "nordpool", "nordpool_official", or "octopus"
-  use_official_integration: false   # Set true for official HA Nordpool integration
-  config_entry_id: ""               # Required when use_official_integration is true
-
-# Octopus Energy configuration (only needed when price_provider is "octopus")
-# See "Octopus Energy Setup" section below for details
-octopus:
-  import_today_entity: ""
-  import_tomorrow_entity: ""
-  export_today_entity: ""
-  export_tomorrow_entity: ""
+# Energy provider configuration
+energy_provider:
+  provider: "nordpool"              # "nordpool", "nordpool_official", or "octopus"
+  nordpool:
+    today_entity: "sensor.nordpool_kwh_your_area"
+    tomorrow_entity: "sensor.nordpool_kwh_your_area"
+  nordpool_official:
+    config_entry_id: ""             # Required when provider is "nordpool_official"
+  octopus:                          # Only needed when provider is "octopus"
+    import_today_entity: ""         # See "Octopus Energy Setup" section below
+    import_tomorrow_entity: ""
+    export_today_entity: ""
+    export_tomorrow_entity: ""
 
 sensors:
   # Battery sensors (required)
@@ -145,10 +145,6 @@ sensors:
 
   # Consumption forecast (required)
   48h_avg_grid_import: "sensor.48h_average_grid_import_power"  # From Step 2
-
-  # Price sensors (required for Nordpool, not needed for Octopus)
-  nordpool_kwh_today: "sensor.nordpool_kwh_your_area"
-  nordpool_kwh_tomorrow: "sensor.nordpool_kwh_your_area"
 
   # Solar forecast (required)
   solar_forecast_today: "sensor.solcast_pv_forecast_forecast_today"
@@ -173,7 +169,7 @@ sensors:
 
 ### Octopus Energy Setup
 
-If you're using Octopus Energy (UK), set `price_provider: "octopus"` and configure the entity IDs.
+If you're using Octopus Energy (UK), set `provider: "octopus"` under `energy_provider:` and configure the entity IDs.
 
 **1. Find your entity IDs** in Developer Tools > States, search for `octopus_energy_electricity`:
 

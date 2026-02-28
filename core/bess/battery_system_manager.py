@@ -51,7 +51,7 @@ class BatterySystemManager:
         self,
         controller: HomeAssistantAPIController | None = None,
         price_source: PriceSource | None = None,
-        nordpool_config: dict | None = None,
+        energy_provider_config: dict | None = None,
     ):
         """Initialize with same interface as original BatterySystemManager."""
 
@@ -59,7 +59,7 @@ class BatterySystemManager:
         self.battery_settings = BatterySettings()
         self.home_settings = HomeSettings()
         self.price_settings = PriceSettings()
-        self._nordpool_config = nordpool_config or {}
+        self._energy_provider_config = energy_provider_config or {}
 
         # Store controller reference
         self._controller = controller
@@ -127,10 +127,10 @@ class BatterySystemManager:
         return self._controller
 
     def _create_price_source(self, controller) -> PriceSource:
-        """Create the appropriate price source based on nordpool_config.
+        """Create the appropriate price source based on energy_provider config.
 
         Supports three price providers:
-        - "nordpool" (default): Legacy custom Nordpool sensor component
+        - "nordpool": Legacy custom Nordpool sensor component
         - "nordpool_official": Official HA Nordpool integration via service calls
         - "octopus": Octopus Energy Agile tariff via HA event entities
 
@@ -140,38 +140,24 @@ class BatterySystemManager:
         Returns:
             Configured PriceSource instance
         """
-        nordpool_config = self._nordpool_config
-        price_provider = nordpool_config.get("price_provider", "nordpool")
+        config = self._energy_provider_config
+        provider = config.get("provider", "nordpool")
 
-        if price_provider == "octopus":
-            octopus_config = nordpool_config.get("octopus", {})
+        if provider == "octopus":
+            octopus_config = config.get("octopus", {})
             price_source = OctopusEnergySource(
                 ha_controller=controller,
-                import_today_entity=octopus_config.get("import_today_entity", ""),
-                import_tomorrow_entity=octopus_config.get("import_tomorrow_entity", ""),
-                export_today_entity=octopus_config.get("export_today_entity", ""),
-                export_tomorrow_entity=octopus_config.get("export_tomorrow_entity", ""),
+                import_today_entity=octopus_config["import_today_entity"],
+                import_tomorrow_entity=octopus_config["import_tomorrow_entity"],
+                export_today_entity=octopus_config["export_today_entity"],
+                export_tomorrow_entity=octopus_config["export_tomorrow_entity"],
             )
             logger.info("Using Octopus Energy Agile tariff price source")
             return price_source
 
-        if price_provider == "nordpool_official":
-            config_entry_id = nordpool_config.get("config_entry_id")
-            if config_entry_id:
-                from .official_nordpool_source import OfficialNordpoolSource
-
-                price_source = OfficialNordpoolSource(
-                    controller,
-                    config_entry_id,
-                    vat_multiplier=self.price_settings.vat_multiplier,
-                )
-                logger.info("Using official Home Assistant Nordpool integration")
-                return price_source
-
-        # Also support legacy use_official_integration flag for backward compatibility
-        use_official = nordpool_config.get("use_official_integration", False)
-        config_entry_id = nordpool_config.get("config_entry_id")
-        if use_official and config_entry_id:
+        if provider == "nordpool_official":
+            nordpool_official_config = config.get("nordpool_official", {})
+            config_entry_id = nordpool_official_config["config_entry_id"]
             from .official_nordpool_source import OfficialNordpoolSource
 
             price_source = OfficialNordpoolSource(
@@ -182,10 +168,18 @@ class BatterySystemManager:
             logger.info("Using official Home Assistant Nordpool integration")
             return price_source
 
-        # Default: legacy sensor-based Nordpool
-        logger.info("Using legacy/custom Nordpool sensor integration")
-        return HomeAssistantSource(
-            controller, vat_multiplier=self.price_settings.vat_multiplier
+        if provider == "nordpool":
+            nordpool_config = config.get("nordpool", {})
+            logger.info("Using legacy/custom Nordpool sensor integration")
+            return HomeAssistantSource(
+                controller,
+                vat_multiplier=self.price_settings.vat_multiplier,
+                today_entity=nordpool_config["today_entity"],
+                tomorrow_entity=nordpool_config["tomorrow_entity"],
+            )
+
+        raise SystemConfigurationError(
+            message=f"Unknown energy provider: {provider!r}. Must be 'nordpool', 'nordpool_official', or 'octopus'."
         )
 
     def _sync_soc_limits(self) -> None:
@@ -1996,7 +1990,9 @@ class BatterySystemManager:
                 self.price_settings.update(**settings["price"])
                 self._price_manager.markup_rate = self.price_settings.markup_rate
                 self._price_manager.vat_multiplier = self.price_settings.vat_multiplier
-                self._price_manager.additional_costs = self.price_settings.additional_costs
+                self._price_manager.additional_costs = (
+                    self.price_settings.additional_costs
+                )
                 self._price_manager.tax_reduction = self.price_settings.tax_reduction
                 self._price_manager.area = self.price_settings.area
                 self._price_manager.clear_cache()

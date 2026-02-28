@@ -5,6 +5,21 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Unified energy provider configuration: replaced separate `nordpool:` and `octopus:` top-level sections with a single `energy_provider:` section containing `provider`, `nordpool`, `nordpool_official`, and `octopus` sub-keys.
+- Moved Nordpool price sensor entity IDs (`nordpool_kwh_today`/`nordpool_kwh_tomorrow`) from `sensors:` into `energy_provider.nordpool` where they belong, since they are provider configuration not hardware sensor mappings.
+- `HomeAssistantSource` now receives entity IDs directly via constructor instead of looking them up from the controller's sensor map at runtime.
+- Widened `ElectricitySettings.area` TypeScript type from `'SE1' | 'SE2' | 'SE3' | 'SE4'` to `string` to support non-Swedish price areas (e.g. UK for Octopus Energy).
+
+### Removed
+
+- `use_official_integration` boolean from config (redundant with `provider` field).
+- Dead code: `get_nordpool_prices_today()`/`get_nordpool_prices_tomorrow()` methods and their `METHOD_SENSOR_MAP` entries in `ha_api_controller.py` (unused in production, only called from test mock).
+- Dead code: `LegacyNordpoolSource` class in `official_nordpool_source.py` (never imported or instantiated).
+
 ## [6.2.1] - 2026-02-28
 
 ### Fixed
