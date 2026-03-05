@@ -5,13 +5,29 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [6.8.1] - 2026-03-05
+## [6.9.1] - 2026-03-05
 
 ### Fixed
 
 - Sensor data corruption when HA sensors are temporarily unavailable. When Growatt cloud went offline, `_get_sensor_value()` silently returned `0.0` for all lifetime cumulative sensors, poisoning the delta cache. The next collection cycle computed deltas against zero, attributing the entire lifetime sensor total (e.g., 4278 kWh) to a single 15-minute period. Now returns `None` on failure so the period is skipped and the cache remains valid.
 - Sensor failures no longer abort the optimization cycle. Energy data collection errors in `_update_energy_data()` are now caught and logged, allowing the optimization to proceed even when a sensor is temporarily unavailable.
 - `_normalize_sensor_readings()` no longer stores `0.0` for unparseable sensor values, which could also corrupt delta calculations. Invalid values are now skipped.
+
+## [6.9.0] - 2026-03-05
+
+### Fixed
+
+- X-axis labels on dashboard charts no longer show broken `+00` formatting for tomorrow's hours. Both charts now display actual hour of day (00-23) with the "Tomorrow" separator line distinguishing days.
+- Predicted hours background shading on the Energy Flow Chart now aligns correctly with chart data using Recharts `ReferenceArea` instead of raw percentage-based `<rect>` elements.
+- Zero or missing price data no longer causes chart lines to drop to zero. Prices of 0 are treated as null, creating gaps in the line instead of misleading values.
+- Zero SOC on predicted (non-actual) periods in the Battery Level Chart treated as null to avoid false drops to zero at end of day.
+
+### Changed
+
+- Electricity price line on both charts changed from smooth interpolation (`monotone`) to step function (`stepAfter`), accurately representing that prices are flat within each period.
+- Removed tomorrow background shading overlay and midnight separator line on both charts. Tomorrow data still plots normally, visually distinguishable by the repeating x-axis hour labels.
+- Removed "Tomorrow" legend swatch from Energy Flow Chart legend.
+- X-axis now uses explicit tick positions at whole hours with `interval={0}` to prevent duplicate labels and ensure grid alignment.
 
 ## [6.8.0] - 2026-03-03
 
