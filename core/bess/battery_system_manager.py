@@ -49,6 +49,7 @@ from .time_utils import (
     get_period_count,
     period_index_to_timestamp,
 )
+from .weather import fetch_temperature_forecast
 
 logger = logging.getLogger(__name__)
 
@@ -667,59 +668,53 @@ class BatterySystemManager:
 
         Returns:
             List of max charge power values (kW) per period, or None if derating
-            is disabled or forecast unavailable.
+            is disabled.
+
+        Raises:
+            RuntimeError: If the weather forecast cannot be fetched (propagated
+                from fetch_temperature_forecast).
         """
         if not self.temperature_derating.enabled:
             return None
 
-        try:
-            from .weather import fetch_temperature_forecast
+        ml_config = self._addon_options.get("ml", {})
+        weather_entity = ml_config.get("weather_entity")
+        location = ml_config.get("location", {})
+        timezone = location.get("timezone")
 
-            ml_config = self._addon_options.get("ml", {})
-            weather_entity = ml_config.get("weather_entity")
-            location = ml_config.get("location", {})
-            timezone = location.get("timezone")
-
-            if not weather_entity or not timezone:
-                logger.warning(
-                    "Temperature derating enabled but ml.weather_entity or "
-                    "ml.location.timezone not configured - skipping derating"
-                )
-                return None
-
-            temperatures = fetch_temperature_forecast(
-                ha_url=self.controller.base_url,
-                ha_token=self.controller.token,
-                weather_entity=weather_entity,
-                timezone=timezone,
-                num_periods=num_periods,
-            )
-
-            derated_limits = apply_temperature_derating(
-                max_charge_power_kw=self.battery_settings.max_charge_power_kw,
-                temperatures=temperatures,
-                derating_curve=self.temperature_derating.derating_curve,
-            )
-
-            # Log summary for diagnostics
-            min_temp = min(temperatures)
-            max_temp = max(temperatures)
-            min_power = min(derated_limits)
-            max_power = max(derated_limits)
-            logger.info(
-                f"Temperature derating active: temp range {min_temp:.1f}-{max_temp:.1f}°C, "
-                f"charge power range {min_power:.1f}-{max_power:.1f}kW "
-                f"(nominal {self.battery_settings.max_charge_power_kw:.1f}kW)"
-            )
-
-            return derated_limits
-
-        except Exception as e:
-            logger.error(
-                f"Failed to get temperature forecast for derating: {e}. "
-                f"Proceeding without derating."
+        if not weather_entity or not timezone:
+            logger.warning(
+                "Temperature derating enabled but ml.weather_entity or "
+                "ml.location.timezone not configured - skipping derating"
             )
             return None
+
+        temperatures = fetch_temperature_forecast(
+            ha_url=self.controller.base_url,
+            ha_token=self.controller.token,
+            weather_entity=weather_entity,
+            timezone=timezone,
+            num_periods=num_periods,
+        )
+
+        derated_limits = apply_temperature_derating(
+            max_charge_power_kw=self.battery_settings.max_charge_power_kw,
+            temperatures=temperatures,
+            derating_curve=self.temperature_derating.derating_curve,
+        )
+
+        # Log summary for diagnostics
+        min_temp = min(temperatures)
+        max_temp = max(temperatures)
+        min_power = min(derated_limits)
+        max_power = max(derated_limits)
+        logger.info(
+            f"Temperature derating active: temp range {min_temp:.1f}-{max_temp:.1f}°C, "
+            f"charge power range {min_power:.1f}-{max_power:.1f}kW "
+            f"(nominal {self.battery_settings.max_charge_power_kw:.1f}kW)"
+        )
+
+        return derated_limits
 
     def _get_consumption_forecast(self) -> list[float]:
         """Get consumption forecast based on the configured strategy.
@@ -911,7 +906,9 @@ class BatterySystemManager:
                 try:
                     self._generate_ml_predictions()
                 except Exception as e:
-                    logger.warning("Failed to generate ML predictions for next day: %s", e)
+                    logger.warning(
+                        "Failed to generate ML predictions for next day: %s", e
+                    )
 
     def _get_price_data(
         self, prepare_next_day: bool
