@@ -376,6 +376,10 @@ class APIDashboardHourlyData:
     solarExcess: FormattedValue  # How much solar excess in solar-only scenario
     solarSavings: FormattedValue  # Savings from solar vs grid-only
 
+    # DC clipping flows (zero when clipping is disabled or no clipping occurs)
+    dcExcessToBattery: FormattedValue  # DC excess captured by battery (kWh)
+    solarClipped: FormattedValue  # DC excess lost because battery was full (kWh)
+
     # Raw values for logic only
     strategicIntent: str
     directSolar: float
@@ -500,6 +504,14 @@ class APIDashboardHourlyData:
                 "currency",
             ),
             # Raw values for logic
+            dcExcessToBattery=safe_format(
+                hourly.energy.dc_excess_to_battery,
+                "energy_kwh_only",
+            ),
+            solarClipped=safe_format(
+                hourly.energy.solar_clipped,
+                "energy_kwh_only",
+            ),
             strategicIntent=hourly.decision.strategic_intent,
             directSolar=direct_solar,
         )
