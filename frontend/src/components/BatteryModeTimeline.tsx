@@ -111,9 +111,10 @@ export const BatteryModeTimeline: React.FC<BatteryModeTimelineProps> = ({
     ticks.push(h);
   }
 
-  // Layout constants
-  const labelWidth = 80;
-  const rightPad = 16;
+  // Layout constants - paddings approximate Recharts Y-axis label widths so the
+  // time axis aligns with the charts above and below
+  const labelWidth = 65;
+  const rightPad = 65;
   const barHeight = 28;
   const tickHeight = 6;
 
@@ -121,8 +122,6 @@ export const BatteryModeTimeline: React.FC<BatteryModeTimelineProps> = ({
 
   return (
     <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Battery Mode Schedule</h3>
-
       <div className="relative">
         {/* SVG timeline */}
         <svg
@@ -181,19 +180,6 @@ export const BatteryModeTimeline: React.FC<BatteryModeTimelineProps> = ({
               </g>
             );
           })()}
-
-          {/* Label */}
-          <text
-            x={labelWidth - 8}
-            y={barHeight / 2}
-            textAnchor="end"
-            dominantBaseline="central"
-            className="text-sm"
-            fill={isDarkMode ? '#d1d5db' : '#374151'}
-            fontSize={13}
-          >
-            Battery
-          </text>
 
           {/* Time axis ticks and labels */}
           {ticks.map((hour) => {
