@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Bar, ComposedChart, Area, Line } from 'recharts';
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Bar, ComposedChart, Area } from 'recharts';
 import { HourlyData } from '../types';
 import { periodToTimeString, periodToTimeRange } from '../utils/timeUtils';
 import { DataResolution } from '../hooks/useUserPreferences';
@@ -42,15 +42,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
   };
 
   // Transform daily view data to chart format
-  // Helper function to get currency unit from price data
-  const getCurrencyUnit = () => {
-    const firstPriceData = hourlyData.find(hour => hour.buyPrice?.unit);
-    return firstPriceData?.buyPrice?.unit || '???';
-  };
-
-  // Get the actual currency unit for the chart label
-  const currencyUnit = getCurrencyUnit();
-
   const chartData = hourlyData.map((hour, index) => {
     // Check for missing keys and provide warnings
     if (hour.batteryAction === undefined) {
@@ -58,9 +49,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
     }
     if (hour.batterySocEnd === undefined) {
       console.warn(`Missing key: batterySocEnd at index ${index}`);
-    }
-    if (hour.buyPrice === undefined) {
-      console.warn(`Missing key: buyPrice at index ${index}`);
     }
     if (hour.dataSource === undefined) {
       console.warn(`Missing key: dataSource at index ${index}`);
@@ -74,8 +62,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
     const isActual = hour.dataSource === 'actual';
     // Treat zero SOC on predicted periods as missing data
     const batterySocPercent = (rawSoc === 0 && !isActual) ? null : rawSoc;
-    const rawPrice = getValue(hour.buyPrice);
-    const price = rawPrice || null; // Treat zero/missing price as null
     const periodNum = hour.period ?? index;
     if (hour.dataSource === undefined) {
       throw new Error(`MISSING DATA: dataSource is required but missing at index ${index}`);
@@ -96,15 +82,13 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
       hourLabel: periodToTimeString(periodNum, resolution),
       batterySocPercent: batterySocPercent,
       action: batteryAction,
-      price: price,
       dataSource: dataSource,
       isActual: dataSource === 'actual',
       isPredicted: dataSource === 'predicted',
       isTomorrow: false,
       // Include FormattedValue objects for tooltip
       batterySocEndFormatted: hour.batterySocEnd,
-      batteryActionFormatted: hour.batteryAction,
-      buyPriceFormatted: hour.buyPrice
+      batteryActionFormatted: hour.batteryAction
     };
   });
 
@@ -119,8 +103,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
       const batteryAction = getValue(hour.batteryAction);
       const rawSocTmrw = getValue(hour.batterySocEnd);
       const batterySocPercent = rawSocTmrw === 0 ? null : rawSocTmrw;
-      const rawPriceTmrw = getValue(hour.buyPrice);
-      const price = rawPriceTmrw || null;
       // Normalize period numbers: API may return 96-191 (continuation from today) or 0-95
       const rawPeriodNum = hour.period ?? idx;
       const tomorrowPeriodsPerDay = resolution === 'quarter-hourly' ? 96 : 24;
@@ -140,14 +122,12 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
         hourLabel: periodToTimeString(periodNum, resolution),
         batterySocPercent,
         action: batteryAction,
-        price,
         dataSource,
         isActual: false,
         isPredicted: true,
         isTomorrow: true,
         batterySocEndFormatted: hour.batterySocEnd,
-        batteryActionFormatted: hour.batteryAction,
-        buyPriceFormatted: hour.buyPrice
+        batteryActionFormatted: hour.batteryAction
       });
     }
   }
@@ -159,23 +139,30 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
   const xAxisTicks = Array.from({ length: maxHourValue + 1 }, (_, i) => i);
 
   const maxAction = Math.max(...chartData.map(d => Math.abs(d.action || 0)), 1);
-  const maxPrice = Math.max(...chartData.map(h => h.price ?? 0), 1);
+
+  // Find predicted hours range for background shading
+  const firstPredictedIdx = chartData.findIndex(d => !d.isActual && !d.isTomorrow);
+  const lastTodayIdx = chartData.findIndex(d => d.isTomorrow);
+  const firstPredictedHour = firstPredictedIdx > -1 ? chartData[firstPredictedIdx].hour : null;
+  const lastTodayHour = lastTodayIdx > -1 ? chartData[lastTodayIdx - 1]?.hour : maxHourValue;
 
   return (
     <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData}>
+      <div style={{ width: '100%', height: '400px' }}>
+        <ResponsiveContainer>
+          <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
             <CartesianGrid strokeDasharray="5 5" stroke={colors.grid} strokeOpacity={0.3} strokeWidth={0.5} />
             <XAxis
               dataKey="hour"
+              type="number"
               interval={0}
-              tick={{ fill: colors.text, fontSize: 12 }}
-              axisLine={{ stroke: colors.text }}
-              tickLine={{ stroke: colors.text }}
+              stroke={colors.text}
+              tick={{ fontSize: 12 }}
+              domain={[0, maxHourValue]}
               ticks={xAxisTicks}
-              tickFormatter={(value: number) => {
-                return `${(Math.floor(value) % 24).toString().padStart(2, '0')}:00`;
+              label={{ value: 'Hour of Day', position: 'insideBottom', offset: -10 }}
+              tickFormatter={(hour: number) => {
+                return (Math.floor(hour) % 24).toString().padStart(2, '0');
               }}
             />
             
@@ -194,35 +181,18 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
               }}
             />
             
-            {/* Right Y-axis for Electricity Price */}
-            <YAxis 
-              yAxisId="right" 
-              orientation="right" 
-              stroke={colors.text}
-              domain={[0, Math.ceil(maxPrice * 1.2 * 10) / 10]}
-              tick={{ fontSize: 11 }}
-              tickFormatter={(value) => value.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-              label={{ 
-                value: `Electricity Price (${currencyUnit}/kWh)`, 
-                angle: 90, 
-                position: 'insideRight', 
-                style: { textAnchor: 'middle', dominantBaseline: 'central' }
-              }}
-            />
-            
-            {/* Third Y-axis for Battery Actions (kWh) */}
-            <YAxis 
+            {/* Right Y-axis for Battery Actions (kWh) */}
+            <YAxis
               yAxisId="action"
               orientation="right"
               stroke={colors.text}
               domain={[-maxAction * 1.2, maxAction * 1.2]}
               tick={{ fontSize: 12 }}
               tickFormatter={(value) => value.toLocaleString('sv-SE', {minimumFractionDigits: 1, maximumFractionDigits: 1})}
-              label={{ 
-                value: 'Battery Action (kWh)', 
-                angle: 90, 
-                position: 'outside',
-                offset: 40,
+              label={{
+                value: 'Battery Action (kWh)',
+                angle: 90,
+                position: 'insideRight',
                 style: { textAnchor: 'middle', dominantBaseline: 'central' }
               }}
             />
@@ -236,7 +206,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
               }}
               formatter={(value, name, props) => {
                 const payload = props?.payload;
-                if (name === 'Electricity Price') return [payload?.buyPriceFormatted?.text || 'N/A', 'Electricity Price'];
                 if (name === 'Battery SOC') return [payload?.batterySocEndFormatted?.text || 'N/A', 'Battery SOC'];
                 if (name === 'Battery Action') {
                   const actionValue = Number(value);
@@ -288,18 +257,17 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
               fillOpacity={0.1}
               name="Battery SOC"
             />
-            
-            <Line
-              yAxisId="right"
-              type="stepAfter"
-              dataKey="price"
-              stroke="#9CA3AF"
-              strokeWidth={1.5}
-              strokeDasharray="3 3"
-              name="Electricity Price"
-              dot={false}
-              connectNulls={false}
-            />
+
+            {/* Overlay for predicted hours (today only) */}
+            {firstPredictedHour !== null && (
+              <ReferenceArea
+                yAxisId="left"
+                x1={firstPredictedHour}
+                x2={lastTodayHour}
+                fill={isDarkMode ? 'rgba(120,120,120,0.12)' : 'rgba(120,120,120,0.10)'}
+                ifOverflow="hidden"
+              />
+            )}
             
             <Bar 
               yAxisId="action" 
@@ -346,10 +314,6 @@ export const BatteryLevelChart: React.FC<BatteryLevelChartProps> = ({ hourlyData
         <div className="flex items-center">
           <div className="w-4 h-3 rounded mr-2" style={{ backgroundColor: '#dc2626' }}></div>
           <span className="text-gray-700 dark:text-gray-300">Battery Discharging</span>
-        </div>
-        <div className="flex items-center">
-          <div className="w-4 h-1" style={{ backgroundColor: '#9CA3AF', borderStyle: 'dashed', borderWidth: '1px 0' }}></div>
-          <span className="text-gray-700 dark:text-gray-300 ml-2">Electricity Price</span>
         </div>
         {hasTomorrowData && (
           <div className="flex items-center text-xs text-gray-600 dark:text-gray-400">

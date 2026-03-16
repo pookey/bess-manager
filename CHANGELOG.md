@@ -5,6 +5,17 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.7.0] - 2026-03-16
+
+### Changed
+
+- Dashboard chart layout: Schedule moved to top, followed by Energy Flow and Battery SOC charts
+- Consistent external section headings across all dashboard charts (Energy Flow, Schedule, Battery SOC and Energy Flow)
+- Removed electricity price line from Battery SOC chart to improve right-axis alignment
+- Added actual/predicted background shading to Battery SOC chart matching Energy Flow chart style
+- Removed redundant "Actual hours" / "Predicted hours" legend labels from both charts
+- Improved Battery Mode Timeline alignment with chart axes via left/right padding
+
 ## [7.6.1] - 2026-03-15
 
 ### Added
