@@ -99,6 +99,10 @@ class APIBatterySettings:
     estimatedConsumption: float  # kWh - estimated daily consumption
     consumptionStrategy: str  # active consumption forecast strategy
 
+    # DC clipping settings
+    inverterAcCapacityKw: float  # kW - inverter AC output limit (0 = clipping disabled)
+    solarPanelDcCapacityKw: float  # kW - DC panel capacity (informational)
+
     @classmethod
     def from_internal(
         cls,
@@ -122,6 +126,8 @@ class APIBatterySettings:
             efficiencyDischarge=battery.efficiency_discharge,
             estimatedConsumption=estimated_consumption,
             consumptionStrategy=consumption_strategy,
+            inverterAcCapacityKw=battery.inverter_ac_capacity_kw,
+            solarPanelDcCapacityKw=battery.solar_panel_dc_capacity_kw,
         )
 
     def to_internal_update(self) -> dict:
