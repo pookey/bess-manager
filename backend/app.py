@@ -372,6 +372,12 @@ class BESSController:
                     "minActionProfitThreshold": battery_config[
                         "min_action_profit_threshold"
                     ],
+                    "inverterAcCapacityKw": battery_config.get(
+                        "inverter_ac_capacity_kw", 0.0
+                    ),
+                    "solarPanelDcCapacityKw": battery_config.get(
+                        "solar_panel_dc_capacity_kw", 0.0
+                    ),
                 },
                 "home": {
                     "defaultHourly": home_config["consumption"],
