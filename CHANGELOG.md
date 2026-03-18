@@ -5,6 +5,18 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.7.3] - 2026-03-18
+
+### Fixed
+
+- DP algorithm now correctly models solar auto-charging during IDLE periods. The Growatt
+  inverter's `load_first` (IDLE) mode automatically charges the battery from excess solar
+  before exporting to grid, but the optimizer was treating IDLE as a flat battery hold.
+  This caused it to underestimate morning SOE buildup, leaving insufficient headroom for
+  afternoon DC excess absorption. The optimizer now models this auto-charging, allowing
+  backward induction to choose discharge or EXPORT_ARBITRAGE (`grid_first`) during morning
+  solar-excess periods when preserving headroom for DC clipping is more valuable.
+
 ## [7.7.2] - 2026-03-17
 
 ### Fixed
