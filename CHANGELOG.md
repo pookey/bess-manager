@@ -5,6 +5,16 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.7.5] - 2026-03-28
+
+### Fixed
+
+- Fixed `get_period_count()` in `time_utils.py` always returning 96 periods regardless of
+  DST transitions. Python's `datetime` subtraction with `ZoneInfo` returns wall-clock
+  difference (always 24h) instead of actual elapsed time. Switched to epoch-based
+  calculation which correctly returns 92 (spring-forward) or 100 (fall-back) periods.
+  This was preventing the v7.7.4 Octopus DST fix from working.
+
 ## [7.7.4] - 2026-03-28
 
 ### Fixed
@@ -13,8 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardcoded `MIN_RAW_PERIODS = 46` did not account for shorter days (23 hours) combined
   with settlement-boundary timestamps that carry the previous day's date. Replaced static
   thresholds with DST-aware dynamic calculation using `time_utils.get_period_count()`,
-  so the expected rate count adjusts automatically for spring-forward (44 minimum) and
-  fall-back (48 minimum) transitions.
+  so the expected rate count adjusts automatically for spring-forward and fall-back.
 
 ## [7.7.3] - 2026-03-18
 
