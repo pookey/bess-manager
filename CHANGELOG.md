@@ -5,6 +5,17 @@ All notable changes to BESS Battery Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.7.4] - 2026-03-28
+
+### Fixed
+
+- Octopus Energy price source rejected tomorrow's rates on DST spring-forward days. The
+  hardcoded `MIN_RAW_PERIODS = 46` did not account for shorter days (23 hours) combined
+  with settlement-boundary timestamps that carry the previous day's date. Replaced static
+  thresholds with DST-aware dynamic calculation using `time_utils.get_period_count()`,
+  so the expected rate count adjusts automatically for spring-forward (44 minimum) and
+  fall-back (48 minimum) transitions.
+
 ## [7.7.3] - 2026-03-18
 
 ### Fixed
