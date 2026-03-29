@@ -5,6 +5,13 @@ Period indices are continuous integers from today's 00:00.
 
 This module provides conversion between timestamps and period indices,
 handling DST transitions correctly.
+
+IMPORTANT — Python ZoneInfo datetime arithmetic pitfall:
+    datetime + timedelta and datetime - datetime both operate on wall-clock
+    time with ZoneInfo, not on actual elapsed (UTC) time. On DST transition
+    days this produces incorrect results (e.g. a 23-hour spring-forward day
+    appears as 24 hours). All elapsed-time calculations in this module use
+    epoch-based arithmetic (.timestamp()) to avoid this.
 """
 
 import logging
@@ -27,6 +34,16 @@ PERIODS_PER_HOUR = 4
 PERIODS_PER_DAY_NORMAL = 96
 
 
+def _midnight_epoch(target_date: date) -> float:
+    """Get the UTC epoch for midnight of the given date in local timezone."""
+    return datetime.combine(target_date, time(0, 0), tzinfo=TIMEZONE).timestamp()
+
+
+def _epoch_to_local(epoch: float) -> datetime:
+    """Convert a UTC epoch to a timezone-aware local datetime."""
+    return datetime.fromtimestamp(epoch, tz=TIMEZONE)
+
+
 def get_period_count(target_date: date) -> int:
     """Get number of quarterly periods in a day.
 
@@ -41,15 +58,9 @@ def get_period_count(target_date: date) -> int:
     Returns:
         Number of quarterly periods in this day
     """
-    start = datetime.combine(target_date, time(0, 0), tzinfo=TIMEZONE)
-    next_midnight = datetime.combine(
-        target_date + timedelta(days=1), time(0, 0), tzinfo=TIMEZONE
-    )
-
-    # Use epoch timestamps for correct DST-aware elapsed time.
-    # Direct datetime subtraction with ZoneInfo gives wall-clock difference
-    # (always 24h), not actual elapsed time.
-    elapsed_hours = (next_midnight.timestamp() - start.timestamp()) / 3600
+    start_epoch = _midnight_epoch(target_date)
+    end_epoch = _midnight_epoch(target_date + timedelta(days=1))
+    elapsed_hours = (end_epoch - start_epoch) / 3600
 
     return int(elapsed_hours * PERIODS_PER_HOUR)
 
@@ -95,16 +106,14 @@ def timestamp_to_period_index(dt: datetime) -> int:
             f"Only today and tomorrow supported, got {target_date} (today is {today})"
         )
 
-    # Calculate period within the day
-    day_start = datetime.combine(target_date, time(0, 0), tzinfo=dt.tzinfo)
-    elapsed_minutes = (dt - day_start).total_seconds() / 60
+    # Use epoch arithmetic for DST-safe elapsed time
+    day_start_epoch = _midnight_epoch(target_date)
+    elapsed_minutes = (dt.timestamp() - day_start_epoch) / 60
     period_within_day = int(elapsed_minutes / INTERVAL_MINUTES)
 
     if days_from_today == 0:
-        # Today
         return period_within_day
     else:
-        # Tomorrow (days_from_today == 1)
         today_periods = get_period_count(today)
         return today_periods + period_within_day
 
@@ -138,10 +147,9 @@ def period_index_to_timestamp(period_index: int) -> datetime:
     today_periods = get_period_count(today)
 
     if period_index < today_periods:
-        # Today (0-95 normally)
-        day_start = datetime.combine(today, time(0, 0), tzinfo=TIMEZONE)
-        delta = timedelta(minutes=period_index * INTERVAL_MINUTES)
-        return day_start + delta
+        # Today — use epoch arithmetic for DST safety
+        epoch = _midnight_epoch(today) + period_index * INTERVAL_MINUTES * 60
+        return _epoch_to_local(epoch)
     else:
         # Tomorrow
         tomorrow = today + timedelta(days=1)
@@ -155,9 +163,10 @@ def period_index_to_timestamp(period_index: int) -> datetime:
             )
 
         period_within_tomorrow = period_index - today_periods
-        day_start = datetime.combine(tomorrow, time(0, 0), tzinfo=TIMEZONE)
-        delta = timedelta(minutes=period_within_tomorrow * INTERVAL_MINUTES)
-        return day_start + delta
+        epoch = (
+            _midnight_epoch(tomorrow) + period_within_tomorrow * INTERVAL_MINUTES * 60
+        )
+        return _epoch_to_local(epoch)
 
 
 def get_current_period_index() -> int:
