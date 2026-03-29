@@ -8,6 +8,7 @@ import pytest
 from core.bess.historical_data_store import HistoricalDataStore
 from core.bess.models import DecisionData, EnergyData, PeriodData
 from core.bess.settings import BatterySettings
+from core.bess.time_utils import get_period_count
 
 TIMEZONE = ZoneInfo("Europe/Stockholm")
 
@@ -61,24 +62,25 @@ def test_get_today_periods_all_none_when_empty(store):
     """Should return list of None when no data stored."""
     periods = store.get_today_periods()
 
-    assert len(periods) == 96  # Normal day
+    assert len(periods) == get_period_count(datetime.now().date())  # Normal day
     assert all(p is None for p in periods)
 
 
 def test_get_today_periods_with_partial_data(store, sample_period_data):
     """Should return mixed list with some data, some None."""
-    # Store data for periods 0, 50, 95
+    last_period = get_period_count(datetime.now().date()) - 1
+    # Store data for periods 0, 50, and last
     store.record_period(0, sample_period_data)
     store.record_period(50, sample_period_data)
-    store.record_period(95, sample_period_data)
+    store.record_period(last_period, sample_period_data)
 
     periods = store.get_today_periods()
 
-    assert len(periods) == 96
+    assert len(periods) == get_period_count(datetime.now().date())
     assert periods[0] is not None
     assert periods[1] is None  # Not stored
     assert periods[50] is not None
-    assert periods[95] is not None
+    assert periods[last_period] is not None
 
 
 def test_record_period_validates_range(store, sample_period_data):

@@ -83,8 +83,9 @@ class TestGetPriceDataExtended:
 
         assert prices is not None
         assert _price_entries is not None
-        assert len(prices) == 96
-        assert len(_price_entries) == 96
+        today_periods = get_period_count(datetime.now().date())
+        assert len(prices) == today_periods
+        assert len(_price_entries) == today_periods
 
     def test_prepare_next_day_unaffected(self, quarterly_prices_24h):
         """prepare_next_day=True flow is completely unaffected by extended horizon."""
@@ -221,12 +222,15 @@ class TestCalculateTerminalValue:
 
     def test_positive_when_today_only(self):
         """Terminal value should be positive when only today's data is available."""
-        source = MockSource([1.0] * 96)
+        source = TodayOnlyMockSource([1.0] * 100)
         system = _make_system(source)
 
-        # Only 50 remaining prices (clearly today-only)
+        today_periods = get_period_count(datetime.now().date())
+        # Remaining prices from mid-day, clearly within today only
+        mid_period = today_periods // 2
+        remaining = today_periods - mid_period
         terminal_value = system._calculate_terminal_value(
-            buy_prices=[1.0] * 50, optimization_period=46
+            buy_prices=[1.0] * remaining, optimization_period=mid_period
         )
 
         # Should be avg_buy * efficiency_discharge - cycle_cost > 0

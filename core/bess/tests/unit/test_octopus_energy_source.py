@@ -13,18 +13,20 @@ from core.bess.octopus_energy_source import OctopusEnergySource
 from core.bess.price_manager import MockSource, PriceManager
 
 
-def _make_rates(target_date, count=48, base_value=0.20, export=False):
+def _make_rates(target_date, count=None, base_value=0.20, export=False):
     """Create mock Octopus rate entries for a given date.
 
     Args:
         target_date: Date to create rates for
-        count: Number of 30-minute periods
+        count: Number of 30-minute periods (default: DST-aware expected count)
         base_value: Base price value
         export: If True, use lower values typical of export rates
 
     Returns:
         List of rate dicts with start, end, and value_inc_vat
     """
+    if count is None:
+        count = time_utils.get_period_count(target_date) // 2
     rates = []
     for i in range(count):
         start = datetime.combine(target_date, datetime.min.time()) + timedelta(
@@ -96,19 +98,22 @@ class TestImportRateFetching:
 
     def test_fetch_today_import_rates(self):
         today = datetime.now().date()
-        rates = _make_rates(today)
+        expected_quarterly = time_utils.get_period_count(today)
+        expected_raw = expected_quarterly // 2
+        rates = _make_rates(today, count=expected_raw)
         controller = _make_ha_controller(rates)
         source = _make_source(controller)
 
         prices = source.get_prices_for_date(today)
 
-        # 48 half-hourly rates expanded to 96 quarterly periods
-        assert len(prices) == 96
-        # Each raw rate is duplicated: indices 0,1 from rate 0; indices 94,95 from rate 47
+        # Half-hourly rates expanded to quarterly periods
+        assert len(prices) == expected_quarterly
+        # Each raw rate is duplicated
         assert prices[0] == rates[0]["value_inc_vat"]
         assert prices[1] == rates[0]["value_inc_vat"]
-        assert prices[94] == rates[47]["value_inc_vat"]
-        assert prices[95] == rates[47]["value_inc_vat"]
+        last_rate = expected_raw - 1
+        assert prices[-2] == rates[last_rate]["value_inc_vat"]
+        assert prices[-1] == rates[last_rate]["value_inc_vat"]
 
     def test_fetch_tomorrow_import_rates(self):
         tomorrow = datetime.now().date() + timedelta(days=1)
@@ -141,9 +146,11 @@ class TestImportRateFetching:
             source.get_prices_for_date(today)
 
     def test_partial_rates_accepted(self):
-        """46-47 rates should be accepted (Octopus publishes incrementally)."""
+        """Rates slightly below expected count should be accepted (incremental publishing)."""
         today = datetime.now().date()
-        for count in (46, 47):
+        expected_raw = time_utils.get_period_count(today) // 2
+        # Test with expected-1 and expected-2 (within tolerance)
+        for count in (expected_raw - 1, expected_raw - 2):
             rates = _make_rates(today, count=count)
             controller = _make_ha_controller(rates)
             source = _make_source(controller)
@@ -153,10 +160,11 @@ class TestImportRateFetching:
             assert len(prices) == count * 2
 
     def test_too_many_rates_raises_error(self):
-        """More than 48 rates for a single date should fail validation."""
+        """More than expected rates for a single date should fail validation."""
         today = datetime.now().date()
-        rates = _make_rates(today, count=48)
-        # Add duplicate rates that also fall on today to exceed 48
+        expected_raw = time_utils.get_period_count(today) // 2
+        rates = _make_rates(today, count=expected_raw)
+        # Add extra rates to exceed expected count
         extra = _make_rates(today, count=2, base_value=0.50)
         # Adjust extra start times to be within the same day but unique
         for i, rate in enumerate(extra):
@@ -206,7 +214,7 @@ class TestExportRateFetching:
         sell_prices = source.get_sell_prices_for_date(today)
 
         assert sell_prices is not None
-        assert len(sell_prices) == 96
+        assert len(sell_prices) == time_utils.get_period_count(today)
         # Each raw rate is duplicated into two quarterly periods
         assert sell_prices[0] == export_rates[0]["value_inc_vat"]
         assert sell_prices[1] == export_rates[0]["value_inc_vat"]
@@ -256,7 +264,9 @@ class TestDateFilteringAndSorting:
         source = _make_source(controller)
 
         prices = source.get_prices_for_date(today)
-        assert len(prices) == 96  # 48 raw rates expanded to 96 quarterly
+        assert len(prices) == time_utils.get_period_count(
+            today
+        )  # 48 raw rates expanded to 96 quarterly
 
     def test_sorts_rates_chronologically(self):
         """Rates should be sorted by start time regardless of input order."""
@@ -269,7 +279,7 @@ class TestDateFilteringAndSorting:
         source = _make_source(controller)
 
         prices = source.get_prices_for_date(today)
-        assert len(prices) == 96
+        assert len(prices) == time_utils.get_period_count(today)
         # First price should be the midnight rate (lowest index), duplicated
         assert prices[0] == 0.20  # base_value for index 0
         assert prices[1] == 0.20  # same rate, second quarterly period
@@ -325,7 +335,7 @@ class TestPriceManagerIntegration:
 
         price_data = pm.get_price_data(today)
 
-        assert len(price_data) == 96
+        assert len(price_data) == time_utils.get_period_count(today)
         # Sell price should come directly from export rates (duplicated for quarterly)
         assert price_data[0]["sellPrice"] == export_rates[0]["value_inc_vat"]
         assert price_data[1]["sellPrice"] == export_rates[0]["value_inc_vat"]
