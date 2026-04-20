@@ -117,6 +117,9 @@ class StrategicIntent(Enum):
     LOAD_SUPPORT = "LOAD_SUPPORT"  # Discharging to meet home load
     EXPORT_ARBITRAGE = "EXPORT_ARBITRAGE"  # Discharging to grid for profit
     IDLE = "IDLE"  # No significant action (includes natural solar export)
+    CLIPPING_AVOIDANCE = (
+        "CLIPPING_AVOIDANCE"  # Charging to absorb DC solar above inverter AC cap
+    )
 
 
 def _discretize_state_action_space(
@@ -230,6 +233,7 @@ def _compute_reward(
     sell_price: list[float],
     solar_production: float,
     cost_basis: float,
+    inverter_max_power_kw: float = 0.0,
 ) -> tuple[float, float]:
     """Hot-path reward computation — returns scalars only, no dataclass allocation.
 
@@ -359,9 +363,18 @@ def _compute_reward(
     # ============================================================================
     # REWARD CALCULATION
     # ============================================================================
+    # Clipping avoidance: a DC-coupled inverter can only export up to its AC rating.
+    # Anything above that cap is physically clipped at the bus, so it has zero sell
+    # value in the reward even though it shows up in the energy-balance as exported.
+    if inverter_max_power_kw > 0.0:
+        export_cap_kwh = inverter_max_power_kw * dt
+        effective_export = min(grid_exported, export_cap_kwh)
+    else:
+        effective_export = grid_exported
+
     total_cost = (
         grid_imported * current_buy_price
-        - grid_exported * current_sell_price
+        - effective_export * current_sell_price
         + battery_wear_cost
     )
     return -total_cost, new_cost_basis
@@ -612,6 +625,7 @@ def _run_dynamic_programming(
     terminal_value_per_kwh: float = 0.0,
     currency: str = "SEK",
     max_charge_power_per_period: list[float] | None = None,
+    inverter_max_power_kw: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """
     Enhanced DP that stores the PeriodData objects calculated during optimization.
@@ -710,6 +724,7 @@ def _run_dynamic_programming(
                     buy_price=buy_price,
                     sell_price=sell_price,
                     cost_basis=C[t, i],
+                    inverter_max_power_kw=inverter_max_power_kw,
                 )
 
                 # Skip if unprofitable
@@ -981,6 +996,7 @@ def optimize_battery_schedule(
     terminal_value_per_kwh: float = 0.0,
     currency: str = "SEK",
     max_charge_power_per_period: list[float] | None = None,
+    inverter_max_power_kw: float = 0.0,
 ) -> OptimizationResult:
     """
     Battery optimization that eliminates dual cost calculation by using
@@ -1002,6 +1018,11 @@ def optimize_battery_schedule(
             from temperature derating. When provided, charging actions exceeding the
             limit for each period are excluded from the optimization. Defaults to None
             (no per-period limits, uses battery_settings.max_charge_power_kw).
+        inverter_max_power_kw: Inverter AC export cap (kW). When > 0, grid export above
+            this cap is priced at zero in the DP reward — modelling the DC-coupled
+            inverter's clipping behaviour and pushing the optimiser to charge the
+            battery during otherwise-wasted solar overproduction. Defaults to 0.0
+            (feature disabled — behaviour is bit-identical to pre-feature).
 
     Returns:
         OptimizationResult with optimal battery schedule
@@ -1052,6 +1073,7 @@ def optimize_battery_schedule(
         terminal_value_per_kwh=terminal_value_per_kwh,
         currency=currency,
         max_charge_power_per_period=max_charge_power_per_period,
+        inverter_max_power_kw=inverter_max_power_kw,
     )
 
     # Step 2: Extract optimal path results directly from stored DP data
@@ -1078,6 +1100,22 @@ def optimize_battery_schedule(
         period_data = stored_period_data[(t, i)]
         hourly_results.append(period_data)
         current_soe = period_data.energy.battery_soe_end
+
+    # Relabel periods where the DP chose to charge specifically because solar
+    # overproduction would otherwise have been clipped. The reward function has
+    # already been influenced via the inverter cap; this pass only rewrites the
+    # strategic intent so the UI, logs, and inverter-control mapping (via
+    # GrowattScheduleManager) surface the clipping-avoidance rationale.
+    if inverter_max_power_kw > 0.0:
+        export_cap_kwh = inverter_max_power_kw * dt
+        for period_data in hourly_results:
+            if (
+                period_data.energy.solar_production > export_cap_kwh
+                and period_data.energy.battery_charged > POWER_TOLERANCE_KW * dt
+            ):
+                period_data.decision.strategic_intent = (
+                    StrategicIntent.CLIPPING_AVOIDANCE.value
+                )
 
     # Step 3: Calculate economic summary directly from PeriodData
     total_base_cost = sum(
