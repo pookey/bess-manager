@@ -891,6 +891,7 @@ class APISetupCompletePayload(BaseModel):
     minSoc: float | None = None
     maxSoc: float | None = None
     maxChargeDischargePower: float | None = None
+    inverterMaxPowerKw: float | None = None
     cycleCost: float | None = None
     minActionProfitThreshold: float | None = None
     # Home settings
