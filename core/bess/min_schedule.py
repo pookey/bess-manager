@@ -642,7 +642,7 @@ class GrowattScheduleManager:
 
             # Calculate power rates from battery action
             (
-                _charge_power_rate,
+                charge_power_rate,
                 discharge_power_rate,
             ) = self._calculate_power_rates_from_action(battery_action, intent)
 
@@ -658,7 +658,11 @@ class GrowattScheduleManager:
             elif intent == "SOLAR_STORAGE":
                 grid_charge = False
                 discharge_rate = 0
-                charge_rate = 100
+                # Honor DP's chosen charge power. Capping battery charge below
+                # 100% during solar surplus periods leaves DC headroom that the
+                # inverter routes to AC export, avoiding clipping on systems
+                # where PV DC capacity exceeds inverter AC capacity.
+                charge_rate = charge_power_rate
                 state = "charging" if battery_action > 0.01 else "idle"
                 batt_mode = "battery_first"
 
