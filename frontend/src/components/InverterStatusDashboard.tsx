@@ -491,6 +491,7 @@ const InverterStatusDashboard: React.FC = () => {
       'LOAD_SUPPORT': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
       'EXPORT_ARBITRAGE': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
       'GRID_CHARGING': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300',
+      'CLIPPING_AVOIDANCE': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300',
       'IDLE': 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
     };
     return colors[intent] || colors['IDLE'];
