@@ -1524,6 +1524,7 @@ class BatterySystemManager:
                 terminal_value_per_kwh=terminal_value,
                 currency=self.home_settings.currency,
                 max_charge_power_per_period=max_charge_power_per_period,
+                inverter_max_power_kw=self.battery_settings.inverter_max_power_kw,
             )
 
             # Add timestamps to period data (algorithm is time-agnostic, operates on relative indices)

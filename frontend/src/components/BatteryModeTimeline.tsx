@@ -9,17 +9,18 @@ import { DataResolution } from '../hooks/useUserPreferences';
 const CHART_LEFT_OFFSET = 65;
 const CHART_RIGHT_OFFSET = 65;
 
-type StrategicIntent = 'GRID_CHARGING' | 'SOLAR_STORAGE' | 'LOAD_SUPPORT' | 'EXPORT_ARBITRAGE' | 'IDLE';
+type StrategicIntent = 'GRID_CHARGING' | 'SOLAR_STORAGE' | 'LOAD_SUPPORT' | 'EXPORT_ARBITRAGE' | 'CLIPPING_AVOIDANCE' | 'IDLE';
 
 const INTENT_CONFIG: Record<StrategicIntent, { label: string; color: string; darkColor: string }> = {
   GRID_CHARGING: { label: 'Charging from Grid', color: '#a855f7', darkColor: '#a855f7' },
   SOLAR_STORAGE: { label: 'Storing Solar', color: '#eab308', darkColor: '#facc15' },
   LOAD_SUPPORT: { label: 'Powering Home', color: '#3b82f6', darkColor: '#60a5fa' },
   EXPORT_ARBITRAGE: { label: 'Selling to Grid', color: '#22c55e', darkColor: '#4ade80' },
+  CLIPPING_AVOIDANCE: { label: 'Absorbing Excess Solar', color: '#f97316', darkColor: '#fb923c' },
   IDLE: { label: 'Standby', color: '#9ca3af', darkColor: '#6b7280' },
 };
 
-const INTENT_ORDER: StrategicIntent[] = ['GRID_CHARGING', 'SOLAR_STORAGE', 'LOAD_SUPPORT', 'EXPORT_ARBITRAGE', 'IDLE'];
+const INTENT_ORDER: StrategicIntent[] = ['GRID_CHARGING', 'SOLAR_STORAGE', 'LOAD_SUPPORT', 'EXPORT_ARBITRAGE', 'CLIPPING_AVOIDANCE', 'IDLE'];
 
 interface BatteryModeTimelineProps {
   hourlyData: HourlyData[];
@@ -44,7 +45,8 @@ function buildSegments(
   const segments: Segment[] = [];
 
   for (let i = 0; i < hourlyData.length; i++) {
-    const intent = (hourlyData[i].strategicIntent as StrategicIntent) || 'IDLE';
+    const rawIntent = hourlyData[i].strategicIntent as StrategicIntent | undefined;
+    const intent: StrategicIntent = rawIntent && rawIntent in INTENT_CONFIG ? rawIntent : 'IDLE';
     const startHour = resolution === 'quarter-hourly' ? i * 0.25 : i;
     const endHour = startHour + step;
 
@@ -58,7 +60,8 @@ function buildSegments(
 
   if (tomorrowData && tomorrowData.length > 0) {
     for (let i = 0; i < tomorrowData.length; i++) {
-      const intent = (tomorrowData[i].strategicIntent as StrategicIntent) || 'IDLE';
+      const rawIntent = tomorrowData[i].strategicIntent as StrategicIntent | undefined;
+      const intent: StrategicIntent = rawIntent && rawIntent in INTENT_CONFIG ? rawIntent : 'IDLE';
       const startHour = 24 + (resolution === 'quarter-hourly' ? i * 0.25 : i);
       const endHour = startHour + step;
 

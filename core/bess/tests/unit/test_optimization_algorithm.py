@@ -417,3 +417,70 @@ def test_strategy_data_structure():
         assert hour_data.decision.strategic_intent is not None
         assert hour_data.decision.battery_action is not None
         assert hour_data.decision.cost_basis >= 0
+
+
+def test_inverter_cap_disabled_matches_baseline(
+    sample_price_data, sample_consumption_data, sample_solar_data
+):
+    """Feature off (inverter_max_power_kw=0.0) must be bit-identical to the
+    pre-feature behaviour: same economic summary, same period-by-period decisions.
+    This regression-guards the default path for all existing users.
+    """
+    kwargs = {
+        "buy_price": sample_price_data["buy_price"],
+        "sell_price": sample_price_data["sell_price"],
+        "home_consumption": sample_consumption_data,
+        "solar_production": sample_solar_data,
+        "initial_soe": battery_settings.reserved_capacity,
+        "battery_settings": battery_settings,
+    }
+
+    baseline = optimize_battery_schedule(**kwargs)
+    with_default = optimize_battery_schedule(**kwargs, inverter_max_power_kw=0.0)
+
+    assert (
+        baseline.economic_summary.battery_solar_cost
+        == with_default.economic_summary.battery_solar_cost
+    )
+    assert (
+        baseline.economic_summary.grid_to_battery_solar_savings
+        == with_default.economic_summary.grid_to_battery_solar_savings
+    )
+    for a, b in zip(baseline.period_data, with_default.period_data, strict=True):
+        assert a.decision.strategic_intent == b.decision.strategic_intent
+        assert a.energy.battery_charged == b.energy.battery_charged
+        assert a.energy.battery_discharged == b.energy.battery_discharged
+
+
+def test_inverter_cap_charges_more_to_avoid_clipping():
+    """With a restrictive inverter AC cap and sustained DC overproduction, the
+    optimiser should route more solar into the battery than it would with no
+    cap — that's the whole point of the feature.
+    """
+    horizon = 24
+    # Flat prices so the only driver for charging vs. exporting is the cap.
+    buy_price = [0.5] * horizon
+    sell_price = [0.3] * horizon
+    home_consumption = [0.5] * horizon
+    # 4 kWh per 15-min period = 16 kW solar — well above a typical 8 kW inverter.
+    solar_production = [0.0] * 8 + [4.0] * 8 + [0.0] * 8
+
+    common = {
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "home_consumption": home_consumption,
+        "solar_production": solar_production,
+        "initial_soe": battery_settings.reserved_capacity,
+        "battery_settings": battery_settings,
+    }
+
+    without_cap = optimize_battery_schedule(**common, inverter_max_power_kw=0.0)
+    with_cap = optimize_battery_schedule(**common, inverter_max_power_kw=8.0)
+
+    charged_without = sum(p.energy.battery_charged for p in without_cap.period_data)
+    charged_with = sum(p.energy.battery_charged for p in with_cap.period_data)
+
+    assert charged_with > charged_without, (
+        f"Expected more battery charging under a clipping cap, "
+        f"got {charged_with:.2f} kWh with cap vs {charged_without:.2f} kWh without"
+    )

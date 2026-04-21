@@ -88,6 +88,7 @@ class GrowattScheduleManager:
     - SOLAR_STORAGE → battery_first (charging priority)
     - LOAD_SUPPORT → load_first (discharging priority)
     - EXPORT_ARBITRAGE → grid_first (export priority)
+    - CLIPPING_AVOIDANCE → grid_first (export up to AC cap; DC overflow charges battery)
     - IDLE → load_first (normal operation)
     """
 
@@ -101,6 +102,7 @@ class GrowattScheduleManager:
         "SOLAR_STORAGE": "battery_first",  # Priority to battery charging from solar
         "LOAD_SUPPORT": "load_first",  # Priority to battery discharge for load
         "EXPORT_ARBITRAGE": "grid_first",  # Priority to grid export for profit
+        "CLIPPING_AVOIDANCE": "grid_first",  # Export up to AC cap; DC overflow charges battery
         "IDLE": "load_first",  # Normal operation, allows battery discharge
     }
 
@@ -118,6 +120,11 @@ class GrowattScheduleManager:
             "grid_charge": False,
             "charge_rate": 0,
             "discharge_rate": 100,
+        },
+        "CLIPPING_AVOIDANCE": {
+            "grid_charge": False,
+            "charge_rate": 100,
+            "discharge_rate": 0,
         },
         "IDLE": {"grid_charge": False, "charge_rate": 100, "discharge_rate": 0},
     }

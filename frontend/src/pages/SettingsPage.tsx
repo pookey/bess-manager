@@ -30,6 +30,7 @@ interface Toast {
 const EMPTY_BATTERY: BatteryForm = {
   totalCapacity: 0, minSoc: 0, maxSoc: 100,
   maxChargeDischargePowerKw: 0,
+  inverterMaxPowerKw: 0,
   cycleCostPerKwh: 0,
   efficiencyCharge: 97, efficiencyDischarge: 97,
   temperatureDeratingEnabled: false, minActionProfit: 0,
@@ -143,6 +144,7 @@ const SettingsPage: React.FC = () => {
         minSoc: bat_s.minSoc ?? 0,
         maxSoc: bat_s.maxSoc ?? 100,
         maxChargeDischargePowerKw: bat_s.maxChargePowerKw ?? 0,
+        inverterMaxPowerKw: bat_s.inverterMaxPowerKw ?? 0,
         cycleCostPerKwh: bat_s.cycleCostPerKwh ?? 0,
         efficiencyCharge: bat_s.efficiencyCharge ?? 0.97,
         efficiencyDischarge: bat_s.efficiencyDischarge ?? 0.95,
@@ -404,6 +406,7 @@ const SettingsPage: React.FC = () => {
           maxSoc: batteryForm.maxSoc,
           maxChargePowerKw: batteryForm.maxChargeDischargePowerKw,
           maxDischargePowerKw: batteryForm.maxChargeDischargePowerKw,
+          inverterMaxPowerKw: batteryForm.inverterMaxPowerKw,
           cycleCostPerKwh: batteryForm.cycleCostPerKwh,
           minActionProfitThreshold: batteryForm.minActionProfit,
           efficiencyCharge: batteryForm.efficiencyCharge,

@@ -114,6 +114,7 @@ class BatterySettings:
     max_soc: float = BATTERY_MAX_SOC  # percentage
     max_charge_power_kw: float = BATTERY_MAX_CHARGE_DISCHARGE_POWER_KW
     max_discharge_power_kw: float = BATTERY_MAX_CHARGE_DISCHARGE_POWER_KW
+    inverter_max_power_kw: float = 0.0
     charging_power_rate: float = BATTERY_DEFAULT_CHARGING_POWER_RATE
     cycle_cost_per_kwh: float = BATTERY_CHARGE_CYCLE_COST
     min_action_profit_threshold: float = (
@@ -154,6 +155,9 @@ class BatterySettings:
             )
             self.max_discharge_power_kw = battery_config.get(
                 "max_discharge_power_kw", BATTERY_MAX_CHARGE_DISCHARGE_POWER_KW
+            )
+            self.inverter_max_power_kw = battery_config.get(
+                "inverter_max_power_kw", 0.0
             )
             self.cycle_cost_per_kwh = battery_config.get(
                 "cycle_cost_per_kwh", BATTERY_CHARGE_CYCLE_COST

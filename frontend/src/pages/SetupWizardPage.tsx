@@ -40,6 +40,7 @@ const SetupWizardPage: React.FC = () => {
     minSoc: 15,
     maxSoc: 95,
     maxChargeDischargePowerKw: 15.0,
+    inverterMaxPowerKw: 0,
     cycleCostPerKwh: 0.50,
     efficiencyCharge: 97,
     efficiencyDischarge: 97,
@@ -226,6 +227,7 @@ const SetupWizardPage: React.FC = () => {
         minSoc: batteryForm.minSoc,
         maxSoc: batteryForm.maxSoc,
         maxChargeDischargePower: batteryForm.maxChargeDischargePowerKw,
+        inverterMaxPowerKw: batteryForm.inverterMaxPowerKw,
         cycleCost: batteryForm.cycleCostPerKwh,
         minActionProfitThreshold: batteryForm.minActionProfit,
         // Home

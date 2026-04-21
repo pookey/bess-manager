@@ -2499,6 +2499,8 @@ async def setup_complete(payload: APISetupCompletePayload):
             if payload.maxChargeDischargePower is not None:
                 battery["max_charge_power_kw"] = payload.maxChargeDischargePower
                 battery["max_discharge_power_kw"] = payload.maxChargeDischargePower
+            if payload.inverterMaxPowerKw is not None:
+                battery["inverter_max_power_kw"] = payload.inverterMaxPowerKw
             if payload.cycleCost is not None:
                 battery["cycle_cost_per_kwh"] = payload.cycleCost
             if payload.minActionProfitThreshold is not None:

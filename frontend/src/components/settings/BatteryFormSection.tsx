@@ -7,6 +7,7 @@ export interface BatteryForm {
   minSoc: number;
   maxSoc: number;
   maxChargeDischargePowerKw: number;
+  inverterMaxPowerKw: number;
   cycleCostPerKwh: number;
   efficiencyCharge: number;
   efficiencyDischarge: number;
@@ -69,11 +70,14 @@ export function BatteryFormSection({
 
       <SectionCard
         title="Power"
-        description="Maximum charge and discharge power available to the optimizer. Calculate from your battery's C-rate: e.g. 30 kWh × 0.5C = 15 kW."
+        description="Maximum charge and discharge power available to the optimizer. Calculate from your battery's C-rate: e.g. 30 kWh × 0.5C = 15 kW. Inverter Max AC Power is your hybrid inverter's AC export rating — when set, the optimizer charges the battery from excess DC solar that would otherwise be clipped at the AC output."
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {numField('Max Charge / Discharge Power', form.maxChargeDischargePowerKw,
             v => onChange({ ...form, maxChargeDischargePowerKw: v }), { unit: 'kW', min: 0, step: 0.1 })}
+          {numField('Inverter Max AC Power', form.inverterMaxPowerKw,
+            v => onChange({ ...form, inverterMaxPowerKw: v }),
+            { unit: 'kW — 0 disables clipping avoidance', min: 0, step: 0.1 })}
         </div>
       </SectionCard>
 
