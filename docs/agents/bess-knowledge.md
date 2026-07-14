@@ -216,6 +216,41 @@ actual house deficit, and at 15-minute resolution a SOLAR_EXPORT period is net
 surplus (deficit 0), so planned vs realized economics are unchanged.  The gate
 only affects *sub-15-minute* hardware behaviour.
 
+### The inverter AC output cap (solar clipping avoidance)
+
+`inverter_ac_capacity_kw` (BatterySettings, default 0 = disabled) models a
+hybrid inverter whose **total AC output** (PV DC→AC conversion plus battery
+discharge) is capped — e.g. 5 kW on a Growatt MIN 5000TL-XH — while DC-coupled
+PV *above* the cap can still charge the battery directly, but only while the
+battery has room.  With the cap set:
+
+- **Clipped solar is worth zero** in the DP: per period, solar not stored
+  DC-side is deliverable to home/grid only up to
+  `cap × (1 − inverter_ac_capacity_margin) × dt`; the excess is `clipped_solar`
+  (reported per period on `EnergyData` and as `clippedSolar` in the API).
+  A full battery during above-cap solar is therefore genuinely costly, which
+  is what pushes the optimizer to reserve headroom for the midday peak.
+- **HOLD pseudo-action**: normally IDLE passively absorbs surplus, so the DP
+  cannot defer charging.  With the cap enabled it gains a HOLD action —
+  battery deliberately idle, surplus exports up to the cap.  HOLD periods
+  classify as **SOLAR_EXPORT** with `battery_action = 0` and a not-full
+  battery.  So with this feature on, SOLAR_EXPORT does **not** imply the
+  battery is full — it can mean "deliberately holding for later overflow".
+- **Hardware mapping change (cap on only)**: SOLAR_EXPORT writes
+  `charge_rate=0` instead of 100, stopping `load_first` from passively
+  filling the battery.  On a genuinely full battery this is a no-op.  The
+  shadow-price *discharge* gate above is unchanged and orthogonal.
+- **Discharge shares the cap**: battery discharge is limited to the AC
+  headroom the (possibly clipped) solar leaves
+  (`cap − min(solar, cap)` per period), both in the DP's feasible actions and
+  in the simulator.
+- The **margin** (default 0.05) is a model-side haircut on the cap
+  compensating for hourly Solcast forecasts flattening sub-period peaks; it is
+  never written to hardware.
+- Requires per-period charge-rate control (Growatt MIN).  On platforms
+  without it (SPH, SolaX native) the plan is cap-aware but HOLD is not
+  hardware-enforceable.
+
 
 ## Price Calculation
 

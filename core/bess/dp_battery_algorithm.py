@@ -180,6 +180,53 @@ def _soe_floor(soe: float, battery_settings: BatterySettings) -> float:
     return battery_settings.min_soe_kwh if soe >= battery_settings.min_soe_kwh else soe
 
 
+def _effective_ac_cap_kwh(battery_settings: BatterySettings, dt: float) -> float | None:
+    """Per-period AC-output energy cap (kWh), or None when the feature is off.
+
+    Models a hybrid inverter whose total AC output (PV DC→AC conversion plus
+    battery discharge) is capped, while DC-coupled PV can charge the battery
+    above the cap. The margin is a model-side haircut only — it compensates
+    for hourly forecasts flattening sub-period peaks — and is never written
+    to hardware.
+    """
+    if battery_settings.inverter_ac_capacity_kw <= 0.0:
+        return None
+    return (
+        battery_settings.inverter_ac_capacity_kw
+        * (1.0 - battery_settings.inverter_ac_capacity_margin)
+        * dt
+    )
+
+
+def _ac_flows(
+    solar_production: float,
+    home_consumption: float,
+    solar_to_battery: float,
+    battery_discharged: float,
+    ac_cap_kwh: float | None,
+) -> tuple[float, float, float]:
+    """AC-side grid flows for one period, shared by every disposition.
+
+    Solar not stored DC-side must pass through the inverter's AC stage; with a
+    cap, anything above it is clipped (lost, zero credit). Battery discharge
+    shares the same AC stage — callers must pre-limit discharge to the cap
+    headroom (`ac_cap_kwh - min(solar, ac_cap_kwh)`).
+
+    Returns (grid_imported, grid_exported, clipped_solar) in kWh.
+    """
+    residual_solar = solar_production - solar_to_battery
+    if ac_cap_kwh is None:
+        ac_solar = residual_solar
+    else:
+        ac_solar = min(residual_solar, ac_cap_kwh)
+    clipped_solar = residual_solar - ac_solar
+    ac_output = ac_solar + battery_discharged
+    home_served = min(ac_output, home_consumption)
+    grid_exported = ac_output - home_served
+    grid_imported = home_consumption - home_served
+    return grid_imported, grid_exported, clipped_solar
+
+
 def _state_transition(
     soe: float,
     power: float,
@@ -187,6 +234,7 @@ def _state_transition(
     dt: float,
     solar_production: float,
     home_consumption: float,
+    hold: bool = False,
 ) -> float:
     """
     Calculate the next state of energy based on current SOE and power action.
@@ -202,7 +250,10 @@ def _state_transition(
     the economically correct baseline: free solar energy is more valuable stored
     for later use than exported at the (typically lower) sell price.
     """
-    if power > POWER_TOLERANCE_KW:  # STORE disposition (+ optional grid charge)
+    if hold:  # HOLD — battery does nothing; surplus exports (or clips) instead
+        next_soe = soe
+
+    elif power > POWER_TOLERANCE_KW:  # STORE disposition (+ optional grid charge)
         surplus = max(0.0, solar_production - home_consumption)
         room_throughput = (
             battery_settings.max_soe_kwh - soe
@@ -326,14 +377,23 @@ def _compute_reward_grid(
     min_soe = battery_settings.min_soe_kwh
     eff_charge = battery_settings.efficiency_charge
     cycle_cost = battery_settings.cycle_cost_per_kwh
+    ac_cap_kwh = _effective_ac_cap_kwh(battery_settings, dt)
 
     is_charge = power > POWER_TOLERANCE_KW
     is_discharge = power < -POWER_TOLERANCE_KW
 
-    # Battery flows
-    battery_charged_active = power * dt
-    battery_discharged_active = np.abs(power) * dt
+    def ac_flows_grid(solar_to_battery, battery_discharged):
+        """np mirror of _ac_flows — same formulas, broadcast-friendly."""
+        residual_solar = solar_production - solar_to_battery
+        if ac_cap_kwh is None:
+            ac_solar = residual_solar
+        else:
+            ac_solar = np.minimum(residual_solar, ac_cap_kwh)
+        ac_output = ac_solar + battery_discharged
+        home_served = np.minimum(ac_output, home_consumption)
+        return home_consumption - home_served, ac_output - home_served
 
+    # Idle passive-absorption flows
     idle_below_min = soe < min_soe
     passive_energy_stored = next_soe - soe
     idle_battery_charged = np.where(
@@ -341,19 +401,7 @@ def _compute_reward_grid(
         passive_energy_stored / eff_charge,
         0.0,
     )
-
-    battery_charged = np.where(
-        is_charge,
-        battery_charged_active,
-        np.where(is_discharge, 0.0, idle_battery_charged),
-    )
-    battery_discharged = np.where(is_discharge, battery_discharged_active, 0.0)
-
-    energy_balance = (
-        solar_production + battery_discharged - home_consumption - battery_charged
-    )
-    grid_imported = np.maximum(0.0, -energy_balance)
-    grid_exported = np.maximum(0.0, energy_balance)
+    battery_discharged_active = np.abs(power) * dt
 
     # STORE disposition reward (mirrors the early-return branch in
     # _compute_reward, which redefines grid_imported/grid_exported locally)
@@ -367,11 +415,8 @@ def _compute_reward_grid(
     grid_to_battery = remaining_rate
     energy_stored_store = (solar_to_battery + grid_to_battery) * eff_charge
     battery_wear_cost_store = energy_stored_store * cycle_cost
-    surplus_exported = np.maximum(0.0, surplus - solar_to_battery)
-    grid_imported_store = grid_to_battery + max(
-        0.0, home_consumption - solar_production
-    )
-    grid_exported_store = surplus_exported
+    grid_imported_store, grid_exported_store = ac_flows_grid(solar_to_battery, 0.0)
+    grid_imported_store = grid_imported_store + grid_to_battery
     total_cost_store = (
         grid_imported_store * current_buy_price
         - grid_exported_store * current_sell_price
@@ -381,20 +426,23 @@ def _compute_reward_grid(
 
     # Discharging reward -- self-throttling fix (#240): overshoot below
     # BATTERY_EXPORT_THRESHOLD_KWH gets no export credit.
+    grid_imported_d, grid_exported_d = ac_flows_grid(0.0, battery_discharged_active)
     grid_exported_discharge = np.where(
-        grid_exported <= BATTERY_EXPORT_THRESHOLD_KWH, 0.0, grid_exported
+        grid_exported_d <= BATTERY_EXPORT_THRESHOLD_KWH, 0.0, grid_exported_d
     )
     total_cost_discharge = (
-        grid_imported * current_buy_price - grid_exported_discharge * current_sell_price
+        grid_imported_d * current_buy_price
+        - grid_exported_discharge * current_sell_price
     )
     reward_discharge = -total_cost_discharge
 
     # IDLE reward
+    grid_imported_idle, grid_exported_idle = ac_flows_grid(idle_battery_charged, 0.0)
     energy_stored_idle = next_soe - soe
     battery_wear_cost_idle = energy_stored_idle * cycle_cost
     total_cost_idle = (
-        grid_imported * current_buy_price
-        - grid_exported * current_sell_price
+        grid_imported_idle * current_buy_price
+        - grid_exported_idle * current_sell_price
         + battery_wear_cost_idle
     )
     reward_idle = -total_cost_idle
@@ -417,6 +465,7 @@ def _compute_reward(
     sell_price: list[float],
     solar_production: float,
     cost_basis: float,
+    hold: bool = False,
 ) -> tuple[float, float]:
     """Hot-path reward computation — returns scalars only, no dataclass allocation.
 
@@ -441,25 +490,16 @@ def _compute_reward(
     """
     current_buy_price = buy_price[period]
     current_sell_price = sell_price[period]
+    ac_cap_kwh = _effective_ac_cap_kwh(battery_settings, dt)
 
-    # Battery flows
-    if power > POWER_TOLERANCE_KW:  # Active charging
-        battery_charged = power * dt
-        battery_discharged = 0.0
-    elif power < -POWER_TOLERANCE_KW:  # Active discharging
-        battery_charged = 0.0
-        battery_discharged = abs(power) * dt
-    else:  # IDLE — passive solar charging
-        battery_charged, battery_discharged = _idle_battery_flows(
-            soe, next_soe, battery_settings
+    if hold:  # HOLD — no battery flows, no wear, cost basis unchanged
+        grid_imported, grid_exported, _ = _ac_flows(
+            solar_production, home_consumption, 0.0, 0.0, ac_cap_kwh
         )
-
-    # Grid flows from energy balance
-    energy_balance = (
-        solar_production + battery_discharged - home_consumption - battery_charged
-    )
-    grid_imported = max(0, -energy_balance)
-    grid_exported = max(0, energy_balance)
+        total_cost = (
+            grid_imported * current_buy_price - grid_exported * current_sell_price
+        )
+        return -total_cost, cost_basis
 
     # ============================================================================
     # BATTERY CYCLE COST AND COST BASIS CALCULATION
@@ -484,11 +524,22 @@ def _compute_reward(
         battery_wear_cost = energy_stored * battery_settings.cycle_cost_per_kwh
 
         # genuine excess solar (above rate/room) is exported; deliberate grid top-up imported
-        surplus_exported = max(0.0, surplus - solar_to_battery)
-        grid_imported = grid_to_battery + max(0.0, home_consumption - solar_production)
-        grid_exported = surplus_exported
+        grid_imported, grid_exported, _ = _ac_flows(
+            solar_production, home_consumption, solar_to_battery, 0.0, ac_cap_kwh
+        )
+        grid_imported += grid_to_battery
 
-        solar_opportunity_cost = solar_to_battery * current_sell_price
+        if ac_cap_kwh is None:
+            solar_opportunity_cost = solar_to_battery * current_sell_price
+        else:
+            # Storing solar only forgoes the export it actually displaces —
+            # absorbing energy that would have been clipped anyway is free.
+            _, export_without_storing, _ = _ac_flows(
+                solar_production, home_consumption, 0.0, 0.0, ac_cap_kwh
+            )
+            solar_opportunity_cost = (
+                export_without_storing - grid_exported
+            ) * current_sell_price
         grid_energy_cost = grid_to_battery * current_buy_price
         total_new_cost = grid_energy_cost + solar_opportunity_cost + battery_wear_cost
         if next_soe > battery_settings.min_soe_kwh:
@@ -508,6 +559,10 @@ def _compute_reward(
 
     elif power < -POWER_TOLERANCE_KW:  # Discharging
         battery_wear_cost = 0.0
+        battery_discharged = abs(power) * dt
+        grid_imported, grid_exported, _ = _ac_flows(
+            solar_production, home_consumption, 0.0, battery_discharged, ac_cap_kwh
+        )
 
         # Self-throttling fix (#240): load-first hardware never actually
         # exports a small discharge overshoot beyond home_consumption -- it
@@ -520,6 +575,10 @@ def _compute_reward(
             grid_exported = 0.0
 
     else:  # IDLE — passive solar charging
+        battery_charged, _ = _idle_battery_flows(soe, next_soe, battery_settings)
+        grid_imported, grid_exported, _ = _ac_flows(
+            solar_production, home_consumption, battery_charged, 0.0, ac_cap_kwh
+        )
         energy_stored = next_soe - soe  # kWh stored in battery after efficiency
         battery_wear_cost = energy_stored * battery_settings.cycle_cost_per_kwh
         if energy_stored > 0 and next_soe > battery_settings.min_soe_kwh:
@@ -552,6 +611,7 @@ def _build_period_data(
     solar_production: float,
     new_cost_basis: float,
     currency: str,
+    hold: bool = False,
 ) -> PeriodData:
     """Build full PeriodData for the winning action of a DP cell.
 
@@ -560,8 +620,15 @@ def _build_period_data(
     """
     current_buy_price = buy_price[period]
     current_sell_price = sell_price[period]
+    ac_cap_kwh = _effective_ac_cap_kwh(battery_settings, dt)
 
-    if power > POWER_TOLERANCE_KW:  # STORE disposition (+ optional grid charge)
+    if hold:  # HOLD — battery deliberately idle; surplus exports (or clips)
+        battery_charged = 0.0
+        battery_discharged = 0.0
+        battery_action_kwh = 0.0
+        solar_to_battery = 0.0
+        grid_to_battery = 0.0
+    elif power > POWER_TOLERANCE_KW:  # STORE disposition (+ optional grid charge)
         surplus = max(0.0, solar_production - home_consumption)
         room_throughput = (
             battery_settings.max_soe_kwh - soe
@@ -582,17 +649,24 @@ def _build_period_data(
         battery_charged = 0.0
         battery_discharged = abs(power) * dt
         battery_action_kwh = power * dt
+        solar_to_battery = 0.0
+        grid_to_battery = 0.0
     else:  # IDLE — EXPORT disposition: battery holds, surplus exported
         battery_charged, battery_discharged = _idle_battery_flows(
             soe, next_soe, battery_settings
         )
         battery_action_kwh = power * dt
+        solar_to_battery = battery_charged
+        grid_to_battery = 0.0
 
-    energy_balance = (
-        solar_production + battery_discharged - home_consumption - battery_charged
+    grid_imported, grid_exported, clipped_solar = _ac_flows(
+        solar_production,
+        home_consumption,
+        solar_to_battery,
+        battery_discharged,
+        ac_cap_kwh,
     )
-    grid_imported = max(0, -energy_balance)
-    grid_exported = max(0, energy_balance)
+    grid_imported += grid_to_battery
 
     energy_data = EnergyData(
         solar_production=solar_production,
@@ -603,6 +677,7 @@ def _build_period_data(
         grid_exported=grid_exported,
         battery_soe_start=soe,
         battery_soe_end=next_soe,
+        clipped_solar=clipped_solar,
     )
 
     energy_stored = max(0.0, next_soe - soe)
@@ -833,6 +908,8 @@ def _run_dynamic_programming(
     max_discharge_power = available_energy / dt * battery_settings.efficiency_discharge
     discharge_feasible = ~is_discharge | (np.abs(power_row) <= max_discharge_power)
 
+    ac_cap_kwh = _effective_ac_cap_kwh(battery_settings, dt)
+
     # Backward induction
     for t in reversed(range(horizon)):
         period_max_charge = (
@@ -848,6 +925,14 @@ def _run_dynamic_programming(
             charge_feasible = charge_feasible_base
 
         feasible = charge_feasible & discharge_feasible
+        if ac_cap_kwh is not None:
+            # Battery discharge shares the inverter's AC stage with PV
+            # conversion — only the headroom the (possibly clipped) solar
+            # leaves is deliverable.
+            ac_headroom_kwh = max(
+                0.0, ac_cap_kwh - min(solar_production[t], ac_cap_kwh)
+            )
+            feasible &= ~is_discharge | (np.abs(power_row) * dt <= ac_headroom_kwh)
 
         next_soe = _state_transition_grid(
             soe_col,
@@ -882,6 +967,19 @@ def _run_dynamic_programming(
         # returns -inf), so the max over actions can never remain -inf here.
         V[t, :] = np.max(value, axis=1)
 
+        if ac_cap_kwh is not None:
+            # HOLD pseudo-action: battery deliberately idle — no passive
+            # absorption, surplus exports up to the AC cap, the rest clips.
+            # State is unchanged, so its continuation value is V[t+1] at the
+            # same SoE level; the reward is SoE-independent.
+            hold_imported, hold_exported, _ = _ac_flows(
+                solar_production[t], home_consumption[t], 0.0, 0.0, ac_cap_kwh
+            )
+            hold_reward = -(
+                hold_imported * buy_price[t] - hold_exported * sell_price[t]
+            )
+            V[t, :] = np.maximum(V[t, :], hold_reward + V[t + 1, :])
+
     return V
 
 
@@ -904,6 +1002,7 @@ def _discharge_candidates(
     dt: float,
     home_consumption: float,
     solar_production: float,
+    ac_cap_kwh: float | None = None,
 ) -> list[float]:
     """Candidate discharge magnitudes (kW, positive) to evaluate for the
     single-period objective (reward + interpolated continuation value) --
@@ -939,6 +1038,11 @@ def _discharge_candidates(
         battery_settings.max_discharge_power_kw,
         available_energy / dt * battery_settings.efficiency_discharge,
     )
+    if ac_cap_kwh is not None:
+        # Discharge shares the inverter's AC stage with PV conversion — see
+        # the matching feasibility mask in _run_dynamic_programming.
+        ac_headroom_kwh = max(0.0, ac_cap_kwh - min(solar_production, ac_cap_kwh))
+        p_max = min(p_max, ac_headroom_kwh / dt)
     if p_max <= POWER_TOLERANCE_KW:
         return []
 
@@ -1007,7 +1111,7 @@ def _best_action_at_continuous_state(
     sell_price: list[float],
     cost_basis: float,
     max_charge_power_per_period: list[float] | None,
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float, float, bool]:
     """One-step Bellman recompute at a true continuous SoE, using the
     already-known V[t+1, :] (linearly interpolated) as the continuation
     value -- the same reward+max(V) logic as _run_dynamic_programming's
@@ -1024,7 +1128,7 @@ def _best_action_at_continuous_state(
     search itself, kept only for call-site compatibility with
     `_discretize_state_action_space`.
 
-    Returns (best_action, best_next_soe, best_new_cost_basis, best_reward).
+    Returns (best_action, best_next_soe, best_new_cost_basis, best_reward, best_hold).
     """
     period_max_charge = (
         max_charge_power_per_period[t]
@@ -1033,15 +1137,18 @@ def _best_action_at_continuous_state(
     )
     home = home_consumption[t]
     solar = solar_production[t]
+    ac_cap_kwh = _effective_ac_cap_kwh(battery_settings, dt)
 
     best_value = float("-inf")
     best_action = 0.0
     best_next_soe = soe
     best_new_cost_basis = cost_basis
     best_reward = 0.0
+    best_hold = False
 
-    def consider(power: float) -> None:
-        nonlocal best_value, best_action, best_next_soe, best_new_cost_basis, best_reward
+    def consider(power: float, hold: bool = False) -> None:
+        nonlocal best_value, best_action, best_next_soe, best_new_cost_basis
+        nonlocal best_reward, best_hold
         next_soe = _state_transition(
             soe,
             power,
@@ -1049,6 +1156,7 @@ def _best_action_at_continuous_state(
             dt,
             solar_production=solar,
             home_consumption=home,
+            hold=hold,
         )
         # See _soe_floor's docstring (#233): the feasible floor for this
         # candidate is soe itself until real charging crosses back above
@@ -1070,6 +1178,7 @@ def _best_action_at_continuous_state(
             buy_price=buy_price,
             sell_price=sell_price,
             cost_basis=cost_basis,
+            hold=hold,
         )
         value = reward + _interpolate_value(V_next, next_soe, battery_settings)
         if value > best_value:
@@ -1078,12 +1187,19 @@ def _best_action_at_continuous_state(
             best_next_soe = next_soe
             best_new_cost_basis = new_cost_basis
             best_reward = reward
+            best_hold = hold
 
     # IDLE -- always a feasible candidate.
     consider(0.0)
 
+    # HOLD -- deliberately skip passive absorption so surplus exports and
+    # battery headroom is preserved for later above-cap solar. Only
+    # meaningful (and only enforceable on hardware) when the AC cap is set.
+    if ac_cap_kwh is not None:
+        consider(0.0, hold=True)
+
     # Discharge -- exact breakpoint enumeration (Finding 1/2/3/5).
-    for p in _discharge_candidates(soe, battery_settings, dt, home, solar):
+    for p in _discharge_candidates(soe, battery_settings, dt, home, solar, ac_cap_kwh):
         consider(-p)
 
     # Charge (STORE) -- Finding 4: no grid search needed on this side at
@@ -1092,7 +1208,7 @@ def _best_action_at_continuous_state(
     if charge_candidate is not None:
         consider(charge_candidate)
 
-    return best_action, best_next_soe, best_new_cost_basis, best_reward
+    return best_action, best_next_soe, best_new_cost_basis, best_reward, best_hold
 
 
 def _create_idle_schedule(
@@ -1139,16 +1255,23 @@ def _create_idle_schedule(
                 existing_cost + solar_opportunity_cost + battery_wear_cost
             ) / next_soe
 
-        energy_balance = solar_production[t] - home_consumption[t] - battery_charged
+        grid_imported, grid_exported, clipped_solar = _ac_flows(
+            solar_production[t],
+            home_consumption[t],
+            battery_charged,
+            0.0,
+            _effective_ac_cap_kwh(battery_settings, dt),
+        )
         energy_data = EnergyData(
             solar_production=solar_production[t],
             home_consumption=home_consumption[t],
             battery_charged=battery_charged,
             battery_discharged=0.0,
-            grid_imported=max(0, -energy_balance),
-            grid_exported=max(0, energy_balance),
+            grid_imported=grid_imported,
+            grid_exported=grid_exported,
             battery_soe_start=current_soe,
             battery_soe_end=next_soe,
+            clipped_solar=clipped_solar,
         )
 
         economic_data = EconomicData.from_energy_data(
@@ -1322,7 +1445,7 @@ def optimize_battery_schedule(
         # already-known V[t+1, :] (linearly interpolated) as the continuation
         # value -- the same reward+max(V) logic as the backward pass, applied
         # at the true state instead of one snapped to the nearest grid index.
-        action, next_soe, new_cost_basis, _ = _best_action_at_continuous_state(
+        action, next_soe, new_cost_basis, _, hold = _best_action_at_continuous_state(
             soe=current_soe,
             t=t,
             V_next=V[t + 1],
@@ -1350,6 +1473,7 @@ def optimize_battery_schedule(
             solar_production=solar_production[t],
             new_cost_basis=new_cost_basis,
             currency=currency,
+            hold=hold,
         )
 
         # Shadow price = marginal opportunity value of stored energy (dV/dSoE),

@@ -75,7 +75,7 @@ def _total_value(
     sell_prices,
 ):
     _, power_levels = _discretize_state_action_space(battery_settings)
-    _, best_next_soe, _, best_reward = _best_action_at_continuous_state(
+    _, best_next_soe, _, best_reward, _ = _best_action_at_continuous_state(
         soe=soe,
         t=t,
         V_next=V[t + 1, :],
