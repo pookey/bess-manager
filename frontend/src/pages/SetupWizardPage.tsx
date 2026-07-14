@@ -53,6 +53,8 @@ const SetupWizardPage: React.FC = () => {
     efficiencyDischarge: 97,
     temperatureDeratingEnabled: false,
     minActionProfit: 8.0,
+    inverterAcCapacityKw: 0,
+    inverterAcCapacityMargin: 0.05,
   });
 
   const [inverterForm, setInverterForm] = useState<InverterForm>({

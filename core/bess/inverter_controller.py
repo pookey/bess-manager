@@ -137,6 +137,15 @@ class InverterController(ABC):
         """
         if intent == "GRID_CHARGING" and battery_action_kw > 0.01:
             return self._scale_to_percent(battery_action_kw, self.max_charge_power_kw)
+        if (
+            intent == "SOLAR_EXPORT"
+            and self.battery_settings.inverter_ac_capacity_kw > 0.0
+        ):
+            # AC-cap mode: SOLAR_EXPORT means the plan deliberately holds the
+            # battery (HOLD) to keep headroom for later above-cap solar.
+            # charge_rate=0 stops load_first from passively absorbing the
+            # surplus; on a genuinely full battery it is a no-op.
+            return 0
         return control["charge_rate"]
 
     def _map_intent_to_rates(

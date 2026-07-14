@@ -82,6 +82,8 @@ def build_scenario_inputs(scenario_name):
         efficiency_charge=battery["efficiency_charge"],
         efficiency_discharge=battery["efficiency_discharge"],
         cycle_cost_per_kwh=battery["cycle_cost_per_kwh"],
+        inverter_ac_capacity_kw=battery.get("inverter_ac_capacity_kw", 0.0),
+        inverter_ac_capacity_margin=battery.get("inverter_ac_capacity_margin", 0.0),
     )
 
     if price_data:

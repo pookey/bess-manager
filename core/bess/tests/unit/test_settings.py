@@ -124,6 +124,33 @@ def test_battery_settings_action_threshold():
     assert settings.min_action_profit_threshold == 2.0
 
 
+def test_battery_settings_inverter_ac_capacity_defaults_off():
+    """The AC cap defaults to 0 (disabled) so existing installs are unaffected."""
+    settings = BatterySettings()
+
+    assert settings.inverter_ac_capacity_kw == 0.0
+    assert settings.inverter_ac_capacity_margin == 0.05
+
+    settings.update(inverter_ac_capacity_kw=5.0, inverter_ac_capacity_margin=0.1)
+    assert settings.inverter_ac_capacity_kw == 5.0
+    assert settings.inverter_ac_capacity_margin == 0.1
+
+
+def test_battery_settings_inverter_ac_capacity_validation():
+    with pytest.raises(ValueError):
+        BatterySettings(inverter_ac_capacity_kw=-1.0)
+
+    with pytest.raises(ValueError):
+        BatterySettings(inverter_ac_capacity_margin=1.0)
+
+    with pytest.raises(ValueError):
+        BatterySettings(inverter_ac_capacity_margin=-0.1)
+
+    settings = BatterySettings()
+    with pytest.raises(ValueError):
+        settings.update(inverter_ac_capacity_margin=1.5)
+
+
 def test_battery_settings_camelcase_no_longer_accepted():
     """BatterySettings.update() no longer translates camelCase — snake_case
     is the canonical, single format for both the startup and PATCH paths

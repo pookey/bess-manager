@@ -7,7 +7,11 @@ so that faithful control yields cent-exact equality with the plan.
 
 from dataclasses import dataclass, field
 
-from core.bess.dp_battery_algorithm import _build_period_data, _state_transition
+from core.bess.dp_battery_algorithm import (
+    _build_period_data,
+    _effective_ac_cap_kwh,
+    _state_transition,
+)
 from core.bess.inverter_controller import InverterController
 from core.bess.models import PeriodData  # noqa: F401  (type clarity)
 from core.bess.settings import BatterySettings
@@ -55,8 +59,13 @@ def _map_rates(
         else:
             charge_rate_pct = 100
         return True, 0, charge_rate_pct
-    if intent in ("SOLAR_STORAGE", "IDLE", "SOLAR_EXPORT"):
+    if intent in ("SOLAR_STORAGE", "IDLE"):
         return False, 0, 100
+    if intent == "SOLAR_EXPORT":
+        # AC-cap mode: SOLAR_EXPORT is a deliberate HOLD — charge_rate=0 keeps
+        # load_first from passively absorbing the surplus (mirrors
+        # InverterController._compute_charge_rate).
+        return False, 0, (0 if settings.inverter_ac_capacity_kw > 0.0 else 100)
     if intent == "LOAD_SUPPORT":
         if action_kw < -0.01:
             rate = min(
@@ -95,12 +104,22 @@ def mode_to_power(
         max_charge_kwh = min(rate_kw * dt, room / settings.efficiency_charge)
         return max(0.0, max_charge_kwh) / dt
 
+    # Battery discharge shares the inverter's AC stage with PV conversion —
+    # mirrors the discharge feasibility filter in the DP.
+    ac_cap_kwh = _effective_ac_cap_kwh(settings, dt)
+    if ac_cap_kwh is None:
+        ac_headroom_kwh = float("inf")
+    else:
+        ac_headroom_kwh = max(0.0, ac_cap_kwh - min(solar, ac_cap_kwh))
+
     if (
         command.battery_mode == "grid_first"
     ):  # export arbitrage: discharge to grid at rate
         available = max(0.0, soe - settings.min_soe_kwh)
         rate_kw = settings.max_discharge_power_kw * command.discharge_rate_pct / 100.0
-        delivered_kwh = min(rate_kw * dt, available * settings.efficiency_discharge)
+        delivered_kwh = min(
+            rate_kw * dt, available * settings.efficiency_discharge, ac_headroom_kwh
+        )
         return -delivered_kwh / dt
 
     # load_first
@@ -109,13 +128,18 @@ def mode_to_power(
         available = max(0.0, soe - settings.min_soe_kwh)
         rate_kw = settings.max_discharge_power_kw * command.discharge_rate_pct / 100.0
         delivered_kwh = min(
-            deficit, rate_kw * dt, available * settings.efficiency_discharge
+            deficit,
+            rate_kw * dt,
+            available * settings.efficiency_discharge,
+            ac_headroom_kwh,
         )
         return -delivered_kwh / dt
 
     # IDLE/SOLAR_STORAGE (load_first + no discharge): passive solar charging.
     # Return 0.0 so _state_transition uses its IDLE branch (power=0), which charges
     # from solar surplus passively — never drawing from grid (load_first hardware).
+    # With charge_rate_pct=0 (AC-cap HOLD) the simulate() loop passes hold=True
+    # so the IDLE branch's passive absorption is suppressed too.
     return 0.0
 
 
@@ -145,6 +169,14 @@ def simulate(
         power = mode_to_power(
             cmd, solar_production[t], home_consumption[t], soe, settings, dt
         )
+        # AC-cap HOLD: load_first with the charge register at 0 cannot absorb
+        # surplus — suppress the IDLE branch's passive charging.
+        hold = (
+            settings.inverter_ac_capacity_kw > 0.0
+            and cmd.battery_mode == "load_first"
+            and cmd.charge_rate_pct == 0
+            and power == 0.0
+        )
         next_soe = _state_transition(
             soe,
             power,
@@ -152,6 +184,7 @@ def simulate(
             dt,
             solar_production=solar_production[t],
             home_consumption=home_consumption[t],
+            hold=hold,
         )
         pd = _build_period_data(
             power=power,
@@ -166,6 +199,7 @@ def simulate(
             solar_production=solar_production[t],
             new_cost_basis=settings.cycle_cost_per_kwh,
             currency=currency,
+            hold=hold,
         )
         period_data.append(pd)
         soe = next_soe
