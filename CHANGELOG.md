@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **The "Historical Data Access" health check no longer warns about InfluxDB** — the check still probed InfluxDB after the history read moved to Home Assistant's recorder, so removing the now-EOL InfluxDB add-on raised a permanent amber "sensor not responding" banner for a dependency BESS no longer has. It now probes the recorder read that production actually performs. ([#722](https://github.com/johanzander/bess-manager/issues/722))
 - **The HA Statistics consumption strategy is now available on Huawei (EMMA) and Solis** — the setup wizard exposes their lifetime load-consumption sensor, and discovery auto-maps it where present. ([#730](https://github.com/johanzander/bess-manager/issues/730))
 - **A positive-only Planned Consumption Changes block no longer triggers a false "subtracted more than the forecast held" warning** — the clamped-period count now counts only periods the overlay itself drove negative, not ones the base forecast already held. ([#734](https://github.com/johanzander/bess-manager/issues/734))
 - **A slow or failing electricity-price fetch no longer delays or skips the top-of-hour battery mode switch** — price fetching moved to its own scheduler job off the control path, and the optimizer reads a cache that a dedicated job keeps warm. ([#709](https://github.com/johanzander/bess-manager/issues/709))
