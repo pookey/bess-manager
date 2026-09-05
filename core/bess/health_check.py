@@ -2,11 +2,8 @@ import logging
 import math
 from datetime import datetime
 
-from .influxdb_helper import (
-    get_influxdb_config,
-    is_influxdb_configured,
-    test_influxdb_connection,
-)
+from . import time_utils
+from .ha_recorder_helper import get_sensor_data_batch
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +487,7 @@ def run_system_health_checks(system_manager):
         all_component_checks.append(discharge_check)
 
     # 7. Historic data access
-    history_checks = check_historical_data_access()
+    history_checks = check_historical_data_access(system_manager.sensor_collector)
     all_component_checks.extend(history_checks)
 
     # Failure statistics from runtime tracker
@@ -505,11 +502,19 @@ def run_system_health_checks(system_manager):
     }
 
 
-def check_historical_data_access():
-    """Check if the system can access historical data from InfluxDB.
+def check_historical_data_access(sensor_collector):
+    """Check that past energy data can be read back from HA's recorder.
+
+    Probes the same call the cold-start backfill makes (#722), so a recorder
+    narrowed by an ``exclude:`` block or a short ``purge_keep_days`` surfaces
+    here instead of showing up as silently missing actuals.
+
+    Args:
+        sensor_collector: SensorCollector — supplies both the controller and
+            the cumulative sensor list production actually reads.
 
     Returns:
-        dict: Health check result for historical data access
+        list[dict]: Single health check result for historical data access
     """
 
     result = {
@@ -521,9 +526,8 @@ def check_historical_data_access():
         "last_run": datetime.now().isoformat(),
     }
 
-    # Check InfluxDB configuration
-    config_check = {
-        "name": "InfluxDB Configuration",
+    history_check = {
+        "name": "Recorder History",
         "key": None,
         "entity_id": None,
         "status": "UNKNOWN",
@@ -532,68 +536,33 @@ def check_historical_data_access():
         "error": None,
     }
 
-    if not is_influxdb_configured():
-        config_check["status"] = "NOT_CONFIGURED"
-        config_check["formatted_value"] = "Not configured (optional)"
-        logger.info("InfluxDB is not configured — skipping (optional component)")
-        result["checks"].append(config_check)
+    sensors = sensor_collector.cumulative_sensors
+    if not sensors:
+        history_check["status"] = "NOT_CONFIGURED"
+        history_check["formatted_value"] = "No energy sensors configured"
+        result["checks"].append(history_check)
         result["status"] = "NOT_CONFIGURED"
         return [result]
 
-    try:
-        config = get_influxdb_config()
-        config_check["status"] = "OK"
-        config_check["value"] = f"URL: {config['url']}"
-        config_check["formatted_value"] = f"URL: {config['url']}"
-        logger.info("InfluxDB credentials configured")
-    except Exception as e:
-        config_check["status"] = "ERROR"
-        config_check["error"] = f"Failed to load InfluxDB configuration: {e}"
+    # get_sensor_data_batch already turns a fetch failure into an error
+    # result, so there is nothing here for a try/except to add.
+    batch = get_sensor_data_batch(
+        sensor_collector.ha_controller, sensors, time_utils.today()
+    )
 
-    if isinstance(config_check, dict):
-        result["checks"].append(config_check)
+    if batch["status"] == "success":
+        periods = len(batch["data"])
+        history_check["status"] = "OK"
+        history_check["value"] = periods
+        history_check["formatted_value"] = f"{periods} periods available today"
+        logger.info("Recorder history reachable: %d periods today", periods)
     else:
-        logger.error(
-            f"Non-dict config_check encountered in historical data access: {config_check} (type: {type(config_check)})"
+        history_check["status"] = "WARNING"
+        history_check["error"] = batch.get(
+            "message", "Recorder returned no history for today"
         )
 
-    # Test data retrieval if configuration is OK
-    if config_check["status"] == "OK":
-        data_check = {
-            "name": "Data Retrieval",
-            "key": None,
-            "entity_id": None,
-            "status": "UNKNOWN",
-            "value": None,
-            "formatted_value": "N/A",
-            "error": None,
-        }
-
-        try:
-            connection_result = test_influxdb_connection()
-
-            if connection_result["status"] == "ok":
-                data_check["status"] = "OK"
-                data_check["value"] = connection_result["message"]
-                data_check["formatted_value"] = connection_result["message"]
-            elif connection_result["status"] == "misconfigured":
-                data_check["status"] = "WARNING"
-                data_check["error"] = connection_result["message"]
-            else:
-                data_check["status"] = "WARNING"
-                data_check["error"] = connection_result["message"]
-        except Exception as e:
-            data_check["status"] = "ERROR"
-            data_check["error"] = f"Failed to connect to InfluxDB: {e}"
-
-        result["checks"].append(data_check)
-
-    # Determine overall status
-    if all(check["status"] == "OK" for check in result["checks"]):
-        result["status"] = "OK"
-    elif any(check["status"] == "ERROR" for check in result["checks"]):
-        result["status"] = "ERROR"
-    else:
-        result["status"] = "WARNING"
+    result["checks"].append(history_check)
+    result["status"] = history_check["status"]
 
     return [result]

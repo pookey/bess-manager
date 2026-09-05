@@ -2,9 +2,15 @@
 handling of required-but-unmapped sensors (see TODO.md "Health check silently
 skips genuinely-required-but-unmapped sensors")."""
 
+from datetime import datetime, timedelta
 from typing import ClassVar
 
-from core.bess.health_check import determine_health_status, perform_health_check
+from core.bess import time_utils
+from core.bess.health_check import (
+    check_historical_data_access,
+    determine_health_status,
+    perform_health_check,
+)
 
 
 class _FakeController:
@@ -130,3 +136,83 @@ def test_perform_health_check_ok_when_required_sensor_configured_and_working():
     )
 
     assert result["status"] == "OK"
+
+
+class _FakeHistoryController:
+    """Stands in for HomeAssistantAPIController's recorder history endpoint."""
+
+    def __init__(self, response, raises=None):
+        self._response = response
+        self._raises = raises
+        self.calls: list[list[str]] = []
+
+    def get_history_period(self, entity_ids, start_time, end_time):
+        self.calls.append(entity_ids)
+        if self._raises is not None:
+            raise self._raises
+        return self._response
+
+
+class _FakeSensorCollector:
+    def __init__(self, cumulative_sensors, controller):
+        self.cumulative_sensors = cumulative_sensors
+        self.ha_controller = controller
+
+
+def _history_entry(entity_id, state, ts):
+    return {"entity_id": entity_id, "state": state, "last_changed": ts.isoformat()}
+
+
+def test_historical_data_ok_when_recorder_returns_history():
+    """A recorder serving today's history reports the component healthy."""
+    day_start = datetime.combine(time_utils.today(), datetime.min.time()).replace(
+        tzinfo=time_utils.TIMEZONE
+    )
+    history = [
+        [
+            _history_entry("sensor.lifetime_import", "100.0", day_start),
+            _history_entry(
+                "sensor.lifetime_import", "101.0", day_start + timedelta(hours=1)
+            ),
+        ]
+    ]
+    collector = _FakeSensorCollector(
+        ["lifetime_import"], _FakeHistoryController(history)
+    )
+
+    (component,) = check_historical_data_access(collector)
+
+    assert component["status"] == "OK"
+    assert component["checks"][0]["value"] > 0
+
+
+def test_historical_data_warns_when_recorder_has_no_history():
+    """An excluded or purged sensor degrades to a warning, never an error."""
+    collector = _FakeSensorCollector(["lifetime_import"], _FakeHistoryController([]))
+
+    (component,) = check_historical_data_access(collector)
+
+    assert component["status"] == "WARNING"
+    assert component["required"] is False
+
+
+def test_historical_data_not_configured_without_energy_sensors():
+    """No cumulative sensors mapped yet is a setup state, not a failure."""
+    collector = _FakeSensorCollector([], _FakeHistoryController([]))
+
+    (component,) = check_historical_data_access(collector)
+
+    assert component["status"] == "NOT_CONFIGURED"
+
+
+def test_historical_data_warns_when_recorder_unreachable():
+    """A transport failure degrades to a warning with the cause attached."""
+    collector = _FakeSensorCollector(
+        ["lifetime_import"],
+        _FakeHistoryController(None, raises=RuntimeError("connection refused")),
+    )
+
+    (component,) = check_historical_data_access(collector)
+
+    assert component["status"] == "WARNING"
+    assert "connection refused" in component["checks"][0]["error"]
