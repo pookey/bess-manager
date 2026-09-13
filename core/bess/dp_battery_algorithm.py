@@ -2056,6 +2056,7 @@ def optimize_battery_schedule(
     tie_diagnostics: dict | None = None,
     peak_shaving_import_cap_per_period: list[float | None] | None = None,
     min_grid_export_kwh_per_period: list[float] | None = None,
+    session_import_cap_kwh_per_period: list[float | None] | None = None,
 ) -> OptimizationResult:
     """
     Battery optimization that eliminates dual cost calculation by using
@@ -2125,6 +2126,15 @@ def optimize_battery_schedule(
             the most it can where none can. Solar surplus counts. Defaults to
             None (no minimum anywhere); a list of the wrong length raises
             ValueError.
+        session_import_cap_kwh_per_period: Per-period grid-import cap (kWh),
+            the Octopus Power Down session's own "no grid import in the
+            window" constraint (element None = no session cap that period).
+            Combined with the fuse cap (home_settings) and the peak-shaving
+            cap above via `min()`, the same way those two combine -- a session
+            period gets whichever is smallest, a non-session period keeps the
+            other caps alone. Defaults
+            to None (no session constraint anywhere); a list of the wrong
+            length raises ValueError.
 
     Returns:
         OptimizationResult with optimal battery schedule
@@ -2141,11 +2151,37 @@ def optimize_battery_schedule(
             f"{len(min_grid_export_kwh_per_period)} entries for a horizon of "
             f"{horizon} periods"
         )
+    if (
+        session_import_cap_kwh_per_period is not None
+        and len(session_import_cap_kwh_per_period) != horizon
+    ):
+        raise ValueError(
+            f"session_import_cap_kwh_per_period has "
+            f"{len(session_import_cap_kwh_per_period)} entries for a horizon "
+            f"of {horizon} periods"
+        )
     fuse_import_cap_kwh = _effective_import_cap_kwh(home_settings, dt)
-    if peak_shaving_import_cap_per_period is not None:
+    if (
+        peak_shaving_import_cap_per_period is not None
+        or session_import_cap_kwh_per_period is not None
+    ):
+        # A Power Down session cap combines with the fuse and peak-shaving
+        # caps exactly as they combine with each other: the tightest binds.
         import_cap_kwh: list[float | None] | None = [
             _combine_import_caps(
-                fuse_import_cap_kwh, peak_shaving_import_cap_per_period[t]
+                _combine_import_caps(
+                    fuse_import_cap_kwh,
+                    (
+                        peak_shaving_import_cap_per_period[t]
+                        if peak_shaving_import_cap_per_period is not None
+                        else None
+                    ),
+                ),
+                (
+                    session_import_cap_kwh_per_period[t]
+                    if session_import_cap_kwh_per_period is not None
+                    else None
+                ),
             )
             for t in range(horizon)
         ]
