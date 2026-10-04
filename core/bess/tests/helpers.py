@@ -145,6 +145,14 @@ def _scenario_inputs(scenario: dict):
         inputs["peak_shaving_import_cap_per_period"] = scenario[
             "peak_shaving_import_cap_per_period"
         ]
+    if "min_grid_export_kwh_per_period" in scenario:
+        inputs["min_grid_export_kwh_per_period"] = scenario[
+            "min_grid_export_kwh_per_period"
+        ]
+    if "session_import_cap_kwh_per_period" in scenario:
+        inputs["session_import_cap_kwh_per_period"] = scenario[
+            "session_import_cap_kwh_per_period"
+        ]
     return inputs
 
 
