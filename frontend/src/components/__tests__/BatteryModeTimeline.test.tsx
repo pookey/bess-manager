@@ -39,7 +39,7 @@ describe('BatteryModeTimeline', () => {
     // Two quarters LOAD_SUPPORT followed by two quarters BATTERY_EXPORT
     // within the same clock hour must render as two distinct colored
     // segments (one rect each), not merge into a single hour-block.
-    const rects = container.querySelectorAll('rect')
+    const rects = container.querySelectorAll('[data-segment]')
     expect(rects.length).toBe(2)
   })
 
@@ -51,7 +51,7 @@ describe('BatteryModeTimeline', () => {
     mockLoading = true
     const { container } = render(<BatteryModeTimeline currentHour={0} />)
 
-    const rects = container.querySelectorAll('rect')
+    const rects = container.querySelectorAll('[data-segment]')
     expect(rects.length).toBe(2)
   })
 })
